@@ -1,0 +1,14 @@
+provider = "smolvm"
+
+[pibox]
+name = "pibox-smolvm"
+nameSuffix = "worktree"
+workdir = "/workspace"
+
+[sandbox]
+image = "debian:bookworm-slim"
+cpus = 2
+memory = 2048
+net = true
+storage = 20
+overlay = 10

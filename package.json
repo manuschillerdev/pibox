@@ -1,0 +1,41 @@
+{
+  "name": "pibox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "engines": {
+    "node": ">=23.6.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src guest"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "dependencies": {
+    "@earendil-works/gondolin": "0.12.0",
+    "microsandbox": "0.6.6",
+    "smol-toml": "1.6.1",
+    "smolmachines": "1.6.6"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.80.8",
+    "@earendil-works/pi-tui": "0.80.8",
+    "@eslint/js": "9.39.2",
+    "@types/node": "22.19.11",
+    "eslint": "9.39.2",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.54.0"
+  }
+}

@@ -1,0 +1,11 @@
+provider = "microsandbox"
+
+[pibox]
+name = "pibox-microsandbox"
+nameSuffix = "worktree"
+workdir = "/workspace"
+
+[sandbox]
+image = "debian:bookworm-slim"
+ephemeral = true
+replace = true
