@@ -6,6 +6,6 @@ nameSuffix = "worktree"
 workdir = "/workspace"
 
 [sandbox]
-image = "debian:bookworm-slim"
+image = "ghcr.io/manuschillerdev/pibox-base:bookworm"
 ephemeral = true
 replace = true

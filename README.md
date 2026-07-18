@@ -23,7 +23,7 @@ Install dependencies, choose a provider example, and start Pi with the Pibox ext
 
 ```sh
 npm install
-(cd examples/gondolin && pi -e ../../src/index.ts --pibox)
+(cd examples/microsandbox && pi -e ../../src/index.ts --pibox)
 ```
 
 `--pibox` reads `pibox.toml` from the current directory, creates the configured worker, and routes normal prompts and user bash commands to it. Remove the worker with `/pibox-rm`.
@@ -54,7 +54,7 @@ nameSuffix = "worktree"
 workdir = "/workspace"
 
 [sandbox]
-image = "debian:bookworm-slim"
+image = "ghcr.io/manuschillerdev/pibox-base:bookworm"
 ephemeral = true
 replace = true
 ```

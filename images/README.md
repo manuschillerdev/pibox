@@ -13,14 +13,22 @@ Tagging a release or manually running `.github/workflows/publish-images.yml` pub
 
 ## Installing Gondolin assets
 
-Download the archive matching the host architecture, extract it, and import it into Gondolin's local image store:
+Download the release archive matching the host architecture, extract it, and import it into Gondolin's local image store:
 
 ```sh
-tar -xzf pibox-gondolin-aarch64.tar.gz
-npx gondolin image import ./pibox-gondolin-aarch64 --tag pibox-debian:bookworm
-```
+version=v0.0.1
+case "$(uname -m)" in
+  arm64|aarch64) arch=aarch64 ;;
+  x86_64|amd64) arch=x86_64 ;;
+  *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
 
-Use `pibox-gondolin-x86_64.tar.gz` on x86-64 hosts.
+gh release download "$version" \
+  --repo manuschillerdev/pibox \
+  --pattern "pibox-gondolin-$arch.tar.gz"
+tar -xzf "pibox-gondolin-$arch.tar.gz"
+npx gondolin image import "./pibox-gondolin-$arch" --tag pibox-debian:bookworm
+```
 
 ## Local Gondolin builds
 
