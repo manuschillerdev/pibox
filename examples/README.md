@@ -5,6 +5,7 @@ Each provider directory contains native Pibox configuration. Run Pi from that di
 | Example | Sandbox | Image | Authentication policy |
 |---|---|---|---|
 | [`microsandbox/`](microsandbox/) | Microsandbox | `ghcr.io/manuschillerdev/pibox-base:bookworm` | Host-side TLS secret substitution with live rotation |
+| [`microsandbox/full-stack/`](microsandbox/full-stack/) | Microsandbox with a bind-mounted workspace | Pibox OCI image plus a Compose application | TanStack Start, Quarkus, and PostgreSQL development stack |
 | [`gondolin/`](gondolin/) | Gondolin | Imported `pibox-debian:bookworm` release asset | Host-side HTTP hook substitution with live rotation |
 | [`smolvm/`](smolvm/) | smolVM | `ghcr.io/manuschillerdev/pibox-base:bookworm` | Blocked unless `PIBOX_SMOLVM_AUTH_POLICY=guest-environment` is accepted |
 
@@ -12,6 +13,15 @@ From the repository root:
 
 ```sh
 (cd examples/microsandbox && pi -e ../../src/index.ts --pibox)
+```
+
+The advanced Microsandbox example includes its own setup instructions:
+
+```sh
+cd examples/microsandbox/full-stack
+mise trust
+mise install
+mise run up
 ```
 
 For Gondolin, first download the release archive matching the host architecture and import it as described in [`../images/README.md`](../images/README.md). Then run:

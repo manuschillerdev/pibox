@@ -39,7 +39,7 @@ interface PiboxConfig {
 
 The sandbox table is opaque outside its adapter. There is no shared image, mount, port, resource, patch, or networking schema.
 
-- Microsandbox maps table keys to same-named builder methods. Nested arrays represent repeated positional calls; callback-style builder methods accept nested tables.
+- Microsandbox maps table keys to same-named builder methods. Nested arrays represent repeated positional calls; callback-style methods accept nested tables. Methods such as `volume()` that combine positional arguments with a callback use an argument array whose final value is the nested table.
 - Gondolin passes the table as `VMOptions`, adding only Pibox's session label and authentication hooks.
 - smolVM serializes the table unchanged as a provider-native Smolfile and supplies the derived Pibox name separately.
 

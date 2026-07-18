@@ -1,0 +1,7 @@
+.mise.local.toml
+backend/target/
+frontend/.output/
+frontend/.tanstack/
+frontend/dist/
+frontend/node_modules/
+frontend/src/routeTree.gen.ts

@@ -1,0 +1,27 @@
+{
+  "name": "pibox-full-stack-frontend",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.14.0",
+  "scripts": {
+    "dev": "vite dev --host 0.0.0.0 --port 3000",
+    "generate-routes": "tsr generate",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@tanstack/react-router": "1.170.18",
+    "@tanstack/react-start": "1.168.28",
+    "@tanstack/router-plugin": "1.168.20",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@tanstack/router-cli": "1.167.19",
+    "@types/node": "22.19.11",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.3",
+    "typescript": "6.0.2",
+    "vite": "8.1.5"
+  }
+}

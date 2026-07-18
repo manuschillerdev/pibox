@@ -1,0 +1,45 @@
+name: pibox-full-stack
+
+services:
+  database:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: pibox
+      POSTGRES_USER: pibox
+      POSTGRES_PASSWORD: pibox
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --username pibox --dbname pibox"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      POSTGRES_USER: pibox
+      POSTGRES_PASSWORD: pibox
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://database:5432/pibox
+      CORS_ORIGINS: http://localhost:3000
+    depends_on:
+      database:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      BACKEND_URL: http://backend:8080
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres-data:

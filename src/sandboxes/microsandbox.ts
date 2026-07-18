@@ -22,12 +22,12 @@ const PROCESS_EXIT_TIMEOUT_MS = 2_000;
 const SANDBOX_STOP_TIMEOUT_MS = 5_000;
 const CALLBACK_METHODS = new Set([
   "imageWith",
-  "initWith",
   "network",
   "patch",
   "registry",
   "secret",
 ]);
+const POSITIONAL_CALLBACK_METHODS = new Set(["initWith", "volume"]);
 const NO_ARGUMENT_METHODS = new Set([
   "disableMetricsSample",
   "disableNetwork",
@@ -281,22 +281,27 @@ function invokeBuilderMethod(builder: object, method: string, value: unknown): o
       if (!isTable(entry)) {
         throw new Error(`Microsandbox builder method \`${method}\` expects a table`);
       }
-      const currentCallable = (current as Record<string, unknown>)[method];
-      if (typeof currentCallable !== "function") {
-        throw new Error(`Unsupported Microsandbox builder method \`${method}\``);
+      current = invokeNestedBuilder(current, method, [], entry);
+    }
+    return current;
+  }
+  if (POSITIONAL_CALLBACK_METHODS.has(method)) {
+    const entries = isArgumentLists(value) ? value : [value];
+    let current = builder;
+    for (const entry of entries) {
+      if (!Array.isArray(entry) || entry.length < 2) {
+        throw new Error(
+          `Microsandbox builder method \`${method}\` expects positional arguments followed by a table`,
+        );
       }
-      const currentMethod = currentCallable as (
-        this: object,
-        callback: (nested: object) => object,
-      ) => unknown;
-      const result: unknown = currentMethod.call(current, (nested: object) => {
-        let nestedBuilder = nested;
-        for (const [nestedMethod, nestedValue] of Object.entries(entry)) {
-          nestedBuilder = invokeBuilderMethod(nestedBuilder, nestedMethod, nestedValue);
-        }
-        return nestedBuilder;
-      });
-      if (typeof result === "object" && result !== null) current = result;
+      const positional = entry as unknown[];
+      const nested: unknown = positional.at(-1);
+      if (!isTable(nested)) {
+        throw new Error(
+          `Microsandbox builder method \`${method}\` expects its final argument to be a table`,
+        );
+      }
+      current = invokeNestedBuilder(current, method, positional.slice(0, -1), nested);
     }
     return current;
   }
@@ -317,6 +322,30 @@ function invokeBuilderMethod(builder: object, method: string, value: unknown): o
     return current;
   }
   return invoke(value);
+}
+
+function invokeNestedBuilder(
+  builder: object,
+  method: string,
+  args: unknown[],
+  config: Record<string, unknown>,
+): object {
+  const callable = (builder as Record<string, unknown>)[method];
+  if (typeof callable !== "function") {
+    throw new Error(`Unsupported Microsandbox builder method \`${method}\``);
+  }
+  const nestedMethod = callable as (
+    this: object,
+    ...args: [...unknown[], (nested: object) => object]
+  ) => unknown;
+  const result: unknown = nestedMethod.call(builder, ...args, (nested: object) => {
+    let nestedBuilder = nested;
+    for (const [nestedName, nestedValue] of Object.entries(config)) {
+      nestedBuilder = invokeBuilderMethod(nestedBuilder, nestedName, nestedValue);
+    }
+    return nestedBuilder;
+  });
+  return typeof result === "object" && result !== null ? result : builder;
 }
 
 function isTable(value: unknown): value is Record<string, unknown> {

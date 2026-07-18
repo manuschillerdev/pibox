@@ -1,0 +1,14 @@
+provider = "microsandbox"
+
+[pibox]
+name = "pibox-microsandbox-full-stack"
+nameSuffix = "worktree"
+workdir = "/workspace"
+
+[sandbox]
+image = "ghcr.io/manuschillerdev/pibox-base:bookworm"
+ephemeral = true
+replace = true
+cpus = 4
+memory = 8192
+volume = [["/workspace", { bind = ".", quota = 8192, statVirtualization = "relaxed", hostPermissions = "mirror" }]]

@@ -39,7 +39,7 @@ pi -e ./src/index.ts
 /pibox-rm <worker-name-shown-at-startup>
 ```
 
-For repeated local use, `pi install .` loads the package without `-e`, so `pi --pibox` is sufficient.
+For repeated local use, `pi install .` loads the package without `-e`, so `pi --pibox` is sufficient. A Docker Compose example with TanStack Start, Quarkus, PostgreSQL, mise, and a bind-mounted Microsandbox workspace is available in [`examples/microsandbox/full-stack/`](examples/microsandbox/full-stack/).
 
 ## Configuration
 

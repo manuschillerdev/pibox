@@ -1,0 +1,34 @@
+[tools]
+java = "temurin-21.0.11+10.0.LTS"
+maven = "3.9.16"
+node = "24.18.0"
+pnpm = "11.14.0"
+docker-cli = "29.6.2"
+docker-compose = "5.3.1"
+
+[tasks.install]
+description = "Install frontend and backend dependencies"
+run = [
+  "pnpm --dir frontend install --frozen-lockfile",
+  "mvn --file backend/pom.xml --batch-mode dependency:go-offline",
+]
+
+[tasks.check]
+description = "Build the frontend and backend"
+depends = ["install"]
+run = [
+  "pnpm --dir frontend build",
+  "mvn --file backend/pom.xml --batch-mode package -DskipTests",
+]
+
+[tasks.up]
+description = "Build and start the full stack"
+run = "docker-compose up --build"
+
+[tasks.down]
+description = "Stop the full stack"
+run = "docker-compose down --remove-orphans"
+
+[tasks.clean]
+description = "Stop the stack and remove its database volume"
+run = "docker-compose down --remove-orphans --volumes"
