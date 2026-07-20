@@ -1,4 +1,5 @@
 .mise.local.toml
+.pnpm-store/
 backend/target/
 frontend/.output/
 frontend/.tanstack/

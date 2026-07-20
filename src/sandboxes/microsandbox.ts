@@ -14,6 +14,7 @@ import type {
   ProcessEvent,
   ProcessOptions,
   SandboxInstance,
+  SandboxMount,
   SandboxProcess,
   SandboxProvider,
 } from "../sandbox.js";
@@ -43,8 +44,23 @@ export class MicrosandboxProvider implements SandboxProvider {
   async create(
     name: string,
     config: Record<string, unknown>,
+    mounts: readonly SandboxMount[],
   ): Promise<SandboxInstance> {
+    assertNoCacheMountConflicts(config, mounts);
     let builder = applyBuilderConfig(Sandbox.builder(name), config);
+    for (const mount of mounts) {
+      builder = builder.volume(mount.target, (volume: {
+        bind(host: string): {
+          statVirtualization(policy: string): {
+            hostPermissions(policy: string): unknown;
+          };
+        };
+      }) =>
+        volume
+          .bind(mount.source)
+          .statVirtualization("relaxed")
+          .hostPermissions("mirror"));
+    }
     for (const credential of this.credentials) {
       builder = builder.secret((secret: InstanceType<typeof SecretBuilder>) => {
         let current = secret
@@ -243,6 +259,30 @@ class MicrosandboxCredentialBroker implements CredentialBroker {
     });
     requireLiveRotation(plan, credential.secretName);
   }
+}
+
+function assertNoCacheMountConflicts(
+  config: Record<string, unknown>,
+  mounts: readonly SandboxMount[],
+): void {
+  const configured = configuredVolumeTargets(config.volume);
+  for (const mount of mounts) {
+    if (configured.has(mount.target)) {
+      throw new Error(
+        `Microsandbox cache mount ${mount.target} conflicts with sandbox.volume`,
+      );
+    }
+  }
+}
+
+function configuredVolumeTargets(value: unknown): Set<string> {
+  if (!Array.isArray(value)) return new Set();
+  const entries = value.every((entry) => Array.isArray(entry)) ? value : [value];
+  return new Set(
+    entries.flatMap((entry) =>
+      Array.isArray(entry) && typeof entry[0] === "string" ? [entry[0]] : [],
+    ),
+  );
 }
 
 function applyBuilderConfig(

@@ -5,6 +5,15 @@ name = "pibox-microsandbox-full-stack"
 nameSuffix = "worktree"
 workdir = "/workspace"
 
+[caches.pnpm]
+scope = "repository"
+
+[caches.maven]
+scope = "user"
+
+[caches.mise]
+scope = "user"
+
 [sandbox]
 image = "ghcr.io/manuschillerdev/pibox-base:bookworm"
 ephemeral = true

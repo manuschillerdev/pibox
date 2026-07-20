@@ -1,5 +1,6 @@
 import {
   VM,
+  RealFSProvider,
   createHttpHooks,
   type ExecProcess,
   type SecretManager,
@@ -13,6 +14,7 @@ import type {
   ProcessEvent,
   ProcessOptions,
   SandboxInstance,
+  SandboxMount,
   SandboxProcess,
   SandboxProvider,
 } from "../sandbox.js";
@@ -29,6 +31,7 @@ export class GondolinProvider implements SandboxProvider {
   async create(
     name: string,
     config: Record<string, unknown>,
+    mounts: readonly SandboxMount[],
   ): Promise<SandboxInstance> {
     const auth = createHttpHooks({
       secrets: Object.fromEntries(
@@ -45,11 +48,13 @@ export class GondolinProvider implements SandboxProvider {
     this.credentialBroker.attach(auth.secretManager);
     try {
       const options = config as VMOptions;
+      const vfs = mergeCacheMounts(options.vfs, mounts);
       const vm = await VM.create({
         ...options,
         sessionLabel: name,
         httpHooks: auth.httpHooks,
         env: mergeEnvironment(options.env, auth.env),
+        ...(vfs === undefined ? {} : { vfs }),
       });
       return new GondolinInstance(vm);
     } catch (error) {
@@ -174,6 +179,33 @@ class GondolinCredentialBroker implements CredentialBroker {
     }
     this.manager = undefined;
   }
+}
+
+function mergeCacheMounts(
+  configured: VMOptions["vfs"],
+  mounts: readonly SandboxMount[],
+): VMOptions["vfs"] {
+  if (mounts.length === 0) return configured;
+  if (configured === null) {
+    throw new Error("Gondolin cache mounts conflict with disabled sandbox.vfs");
+  }
+  const configuredMounts = configured?.mounts ?? {};
+  for (const mount of mounts) {
+    if (Object.hasOwn(configuredMounts, mount.target)) {
+      throw new Error(
+        `Gondolin cache mount ${mount.target} conflicts with sandbox.vfs.mounts`,
+      );
+    }
+  }
+  return {
+    ...(configured ?? {}),
+    mounts: {
+      ...configuredMounts,
+      ...Object.fromEntries(
+        mounts.map((mount) => [mount.target, new RealFSProvider(mount.source)]),
+      ),
+    },
+  };
 }
 
 function mergeEnvironment(

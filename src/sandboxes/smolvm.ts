@@ -14,6 +14,7 @@ import type {
   ProcessEvent,
   ProcessOptions,
   SandboxInstance,
+  SandboxMount,
   SandboxProcess,
   SandboxProvider,
 } from "../sandbox.js";
@@ -30,6 +31,7 @@ export class SmolvmProvider implements SandboxProvider {
   async create(
     name: string,
     config: Record<string, unknown>,
+    mounts: readonly SandboxMount[],
   ): Promise<SandboxInstance> {
     if (
       this.credentials.length > 0 &&
@@ -40,6 +42,7 @@ export class SmolvmProvider implements SandboxProvider {
       );
     }
 
+    assertNoCacheMountConflicts(config, mounts);
     this.credentialBroker.install(this.credentials);
     const directory = await mkdtemp(join(tmpdir(), "pibox-smolvm-"));
     const smolfile = join(directory, "Smolfile");
@@ -52,6 +55,10 @@ export class SmolvmProvider implements SandboxProvider {
         name,
         "--smolfile",
         smolfile,
+        ...mounts.flatMap((mount) => [
+          "--volume",
+          `${mount.source}:${mount.target}`,
+        ]),
       ]);
       await runSmolvm(["machine", "start", "--name", name]);
       return new SmolvmInstance(
@@ -197,6 +204,44 @@ class SmolvmProcess implements SandboxProcess {
     this.push({ type: "exit", code });
     this.resolveExit(code);
   }
+}
+
+function assertNoCacheMountConflicts(
+  config: Record<string, unknown>,
+  mounts: readonly SandboxMount[],
+): void {
+  const configured = configuredVolumeTargets(config);
+  for (const mount of mounts) {
+    if (configured.has(mount.target)) {
+      throw new Error(
+        `smolVM cache mount ${mount.target} conflicts with sandbox volumes`,
+      );
+    }
+  }
+}
+
+function configuredVolumeTargets(config: Record<string, unknown>): Set<string> {
+  const development = isTable(config.dev) ? config.dev : undefined;
+  const developmentVolumes = stringArray(development?.volumes);
+  const volumes = developmentVolumes.length > 0
+    ? developmentVolumes
+    : stringArray(config.volumes);
+  return new Set(
+    volumes.flatMap((volume) => {
+      const components = volume.split(":");
+      return components.length >= 2 && components[1] ? [components[1]] : [];
+    }),
+  );
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+function isTable(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 interface SecretEnvironment {

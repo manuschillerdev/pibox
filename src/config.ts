@@ -1,10 +1,17 @@
 import { realpath, readFile, stat } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, posix, resolve } from "node:path";
 import { parse } from "smol-toml";
 
 export const DEFAULT_CONFIG_NAME = "pibox.toml";
 
 export type SandboxProviderName = "microsandbox" | "gondolin" | "smolvm";
+export type CacheScope = "repository" | "user";
+
+export interface CacheConfig {
+  name: string;
+  scope: CacheScope;
+  mount?: string;
+}
 
 export interface PiboxConfig {
   path: string;
@@ -14,7 +21,9 @@ export interface PiboxConfig {
     name: string;
     nameSuffix?: string;
     workdir: string;
+    env: Record<string, string>;
   };
+  caches: Record<string, CacheConfig>;
   sandbox: Record<string, unknown>;
 }
 
@@ -69,6 +78,8 @@ export async function loadConfig(path: string): Promise<PiboxConfig> {
   if (!workdir.startsWith("/")) {
     throw new Error("`pibox.workdir` must be an absolute guest path");
   }
+  const env = parseEnvironment(piboxTable.env);
+  const caches = parseCaches(table.caches);
 
   return {
     path: canonicalPath,
@@ -78,9 +89,91 @@ export async function loadConfig(path: string): Promise<PiboxConfig> {
       name: requireNonEmptyString(piboxTable, "name"),
       ...(nameSuffix === undefined ? {} : { nameSuffix }),
       workdir,
+      env,
     },
+    caches,
     sandbox,
   };
+}
+
+function parseCaches(value: unknown): Record<string, CacheConfig> {
+  if (value === undefined) return {};
+  const table = requireTable(value, "`caches`");
+  return Object.fromEntries(
+    Object.entries(table).map(([name, definition]) => {
+      if (!/^[a-z][a-z0-9-]*$/.test(name)) {
+        throw new Error(
+          `Cache name \`${name}\` must use lowercase letters, numbers, and dashes`,
+        );
+      }
+      const cache = requireTable(definition, `\`caches.${name}\``);
+      const unknown = Object.keys(cache).filter(
+        (key) => key !== "scope" && key !== "mount",
+      );
+      if (unknown.length > 0) {
+        throw new Error(
+          `\`caches.${name}\` contains unsupported ${unknown.length === 1 ? "field" : "fields"}: ${unknown.join(", ")}`,
+        );
+      }
+      const scope = optionalCacheScope(cache.scope, name);
+      const configuredMount = optionalStringValue(
+        cache.mount,
+        `\`caches.${name}.mount\``,
+      );
+      const mount = configuredMount === undefined
+        ? undefined
+        : posix.normalize(configuredMount);
+      if (
+        mount !== undefined &&
+        (!configuredMount?.startsWith("/") || mount === "/" || mount.includes("\0"))
+      ) {
+        throw new Error(
+          `\`caches.${name}.mount\` must be an absolute guest path other than /`,
+        );
+      }
+      if (mount?.includes(":")) {
+        throw new Error(`\`caches.${name}.mount\` must not contain a colon`);
+      }
+      return [
+        name,
+        {
+          name,
+          scope,
+          ...(mount === undefined ? {} : { mount }),
+        },
+      ];
+    }),
+  );
+}
+
+function parseEnvironment(value: unknown): Record<string, string> {
+  if (value === undefined) return {};
+  const table = requireTable(value, "`pibox.env`");
+  return Object.fromEntries(
+    Object.entries(table).map(([name, environmentValue]) => {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+        throw new Error(`Invalid environment variable name \`${name}\` in \`pibox.env\``);
+      }
+      if (typeof environmentValue !== "string") {
+        throw new Error(`\`pibox.env.${name}\` must be a string`);
+      }
+      return [name, environmentValue];
+    }),
+  );
+}
+
+function optionalCacheScope(value: unknown, name: string): CacheScope {
+  if (value === undefined || value === "repository") return "repository";
+  if (value === "user") return "user";
+  throw new Error(`\`caches.${name}.scope\` must be "repository" or "user"`);
+}
+
+function optionalStringValue(value: unknown, label: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+  return value.trim();
 }
 
 function requireProvider(value: unknown): SandboxProviderName {

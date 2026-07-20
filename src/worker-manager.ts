@@ -3,6 +3,10 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import {
+  assertCacheEnvironmentIsNotReserved,
+  resolveCaches,
+} from "./cache.js";
+import {
   AuthRelay,
   type SkippedProvider,
 } from "./auth-relay.js";
@@ -98,7 +102,13 @@ export class WorkerManager {
     );
     const profile = validateProfile(options.profile ?? DEFAULT_PROFILE);
     const profileDir = `/root/.pi/${profile}`;
+    const caches = await resolveCaches(config, worktreeRoot);
     const prepared = await AuthRelay.prepareAvailable(name, modelRegistry);
+    assertCacheEnvironmentIsNotReserved(caches.environment, [
+      "PATH",
+      "PI_CODING_AGENT_DIR",
+      ...prepared.credentials.map((credential) => credential.secretName),
+    ]);
     const provider = createSandboxProvider(config.provider, prepared.credentials);
     reportStartup(startup, "reading-configuration", "completed");
     reportStartup(
@@ -113,7 +123,7 @@ export class WorkerManager {
     let authRelay: AuthRelay | undefined;
 
     try {
-      sandbox = await provider.create(name, config.sandbox);
+      sandbox = await provider.create(name, config.sandbox, caches.mounts);
       const relay = new AuthRelay(
         name,
         modelRegistry,
@@ -140,6 +150,7 @@ export class WorkerManager {
         {
           cwd: config.pibox.workdir,
           env: {
+            ...caches.environment,
             PATH: GUEST_PATH,
             PI_CODING_AGENT_DIR: profileDir,
           },

@@ -1,7 +1,13 @@
+export interface SandboxMount {
+  source: string;
+  target: string;
+}
+
 export interface SandboxProvider {
   create(
     name: string,
     config: Record<string, unknown>,
+    mounts: readonly SandboxMount[],
   ): Promise<SandboxInstance>;
 }
 
