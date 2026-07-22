@@ -1,41 +1,16 @@
 # Microsandbox full-stack example
 
-This example combines:
+This example runs a Docker Compose development stack entirely inside Microsandbox:
 
 - a TanStack Start frontend on <http://localhost:3000>;
 - a Quarkus REST backend on <http://localhost:8080/api/tasks>;
-- PostgreSQL on `localhost:5432`;
-- a Microsandbox Pibox worker with this directory bind-mounted at `/workspace`.
+- PostgreSQL on `localhost:5432`.
 
-## Tooling
+The example directory is bind-mounted at `/workspace`. Pibox provides repository-scoped pnpm caching and user-scoped Maven and mise caching. The Pibox base image includes mise, Docker Engine, its matching CLI, and Docker Compose. Pibox starts Docker and runs `mise install` before connecting the worker.
 
-Install [mise](https://mise.jdx.dev/) and ensure a Docker-compatible daemon is running. Then install the pinned Java, Maven, Node.js, pnpm, Docker CLI, and Docker Compose versions:
+## Start Pibox
 
-```sh
-mise trust
-mise install
-mise run install
-```
-
-The frontend uses pnpm exclusively.
-
-## Run the application
-
-```sh
-mise run up
-```
-
-Open <http://localhost:3000>. Stop the services with:
-
-```sh
-mise run down
-```
-
-Use `mise run clean` to also delete the PostgreSQL volume.
-
-## Run Pibox
-
-Authenticate Microsandbox to GHCR if the image package is private:
+Authenticate Microsandbox to GHCR if the Pibox base image package is private:
 
 ```sh
 gh auth refresh --hostname github.com --scopes read:packages
@@ -48,9 +23,34 @@ From the repository root:
 (cd examples/microsandbox/full-stack && pi -e ../../../src/index.ts --pibox)
 ```
 
-The Pibox worker sees this example at `/workspace`. Run Docker Compose from a host terminal; the worker edits the bind-mounted source tree and can inspect its configuration.
+Pibox forwards ports `3000`, `8080`, and `5432` to the host.
 
-Remove the worker before exiting Pi:
+## Start the application
+
+Install project dependencies and start Compose from the connected worker:
+
+```text
+!mise run install
+!mise run up
+```
+
+Open <http://localhost:3000>.
+
+Follow service logs with:
+
+```text
+!mise run logs
+```
+
+## Cleanup
+
+Stop the stack and remove its PostgreSQL volume:
+
+```text
+!mise run clean
+```
+
+Then remove the worker:
 
 ```text
 /pibox-rm <worker-name-shown-at-startup>

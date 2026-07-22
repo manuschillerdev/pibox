@@ -34,20 +34,11 @@ const WORKER_EXTENSION_PATH = "/opt/pibox/worker-extension.ts";
 const NODE_DIR = "/opt/pibox/node";
 const RUNTIME_DIR = "/opt/pibox/runtime";
 const PI_PATH = `${RUNTIME_DIR}/bin/pi`;
+const MISE_PATH = "/usr/local/bin/mise";
+const SERVICE_PATH = "/usr/sbin/service";
+const DOCKER_PATH = "/usr/bin/docker";
 const GUEST_PATH = `${NODE_DIR}/bin:${RUNTIME_DIR}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`;
 const DEFAULT_PROFILE = "pibox-worker";
-const PI_PACKAGE = "@earendil-works/pi-coding-agent@0.80.8";
-const NODE_VERSION = "24.4.1";
-const NODE_ASSETS: Partial<Record<NodeJS.Architecture, { arch: string; sha256: string }>> = {
-  arm64: {
-    arch: "arm64",
-    sha256: "555659c36fc72d0617e278b5d26ffcaebc3760a3de354926b1e5f1b0bfd66083",
-  },
-  x64: {
-    arch: "x64",
-    sha256: "7e067b13cd0dc7ee8b239f4ebe1ae54f3bba3a6e904553fcb5f581530eb8306d",
-  },
-};
 
 export interface WorkerCreateOptions extends ConfigLocationOptions {
   profile?: string;
@@ -105,10 +96,15 @@ export class WorkerManager {
     const caches = await resolveCaches(config, worktreeRoot);
     const prepared = await AuthRelay.prepareAvailable(name, modelRegistry);
     assertCacheEnvironmentIsNotReserved(caches.environment, [
+      "MISE_TRUSTED_CONFIG_PATHS",
       "PATH",
       "PI_CODING_AGENT_DIR",
       ...prepared.credentials.map((credential) => credential.secretName),
     ]);
+    const workerEnvironment = {
+      ...caches.environment,
+      MISE_TRUSTED_CONFIG_PATHS: config.pibox.workdir,
+    };
     const provider = createSandboxProvider(config.provider, prepared.credentials);
     reportStartup(startup, "reading-configuration", "completed");
     reportStartup(
@@ -135,6 +131,13 @@ export class WorkerManager {
 
       reportStartup(startup, "running-startup-scripts", "started");
       await this.bootstrap(sandbox, config, profileDir, relay, startup);
+      await startDocker(sandbox, startup);
+      await installProjectTools(
+        sandbox,
+        config.pibox.workdir,
+        workerEnvironment,
+        startup,
+      );
       reportStartup(startup, "running-startup-scripts", "completed");
 
       reportStartup(startup, "starting-worker-pi", "started");
@@ -150,7 +153,7 @@ export class WorkerManager {
         {
           cwd: config.pibox.workdir,
           env: {
-            ...caches.environment,
+            ...workerEnvironment,
             PATH: GUEST_PATH,
             PI_CODING_AGENT_DIR: profileDir,
           },
@@ -228,79 +231,6 @@ export class WorkerManager {
       "create guest directories",
     );
 
-    if (await hasPinnedGuestRuntime(sandbox)) {
-      reportStartup(
-        startup,
-        "running-startup-scripts",
-        "detail",
-        "Using the preinstalled Pibox runtime",
-      );
-    } else {
-      const noninteractive = { env: { DEBIAN_FRONTEND: "noninteractive" } };
-      reportStartup(
-        startup,
-        "running-startup-scripts",
-        "detail",
-        "Installing Debian bootstrap packages",
-      );
-      await requireSuccess(
-        sandbox,
-        ["/usr/bin/apt-get", "update"],
-        "apt-get update",
-        noninteractive,
-      );
-      await requireSuccess(
-        sandbox,
-        [
-          "/usr/bin/apt-get",
-          "install",
-          "-y",
-          "--no-install-recommends",
-          "ca-certificates",
-          "curl",
-          "git",
-          "xz-utils",
-        ],
-        "apt-get install",
-        noninteractive,
-      );
-      await requireSuccess(
-        sandbox,
-        ["/bin/rm", "-rf", "/var/lib/apt/lists"],
-        "apt cache cleanup",
-      );
-
-      reportStartup(
-        startup,
-        "running-startup-scripts",
-        "detail",
-        `Installing Node.js ${NODE_VERSION}`,
-      );
-      await installNode(sandbox);
-
-      reportStartup(
-        startup,
-        "running-startup-scripts",
-        "detail",
-        "Installing Pi",
-      );
-      await requireSuccess(
-        sandbox,
-        [
-          `${NODE_DIR}/bin/npm`,
-          "install",
-          "--global",
-          "--prefix",
-          RUNTIME_DIR,
-          "--no-audit",
-          "--no-fund",
-          PI_PACKAGE,
-        ],
-        "Pi installation",
-        { env: { PATH: GUEST_PATH } },
-      );
-    }
-
     const extension = await readFile(this.guestExtensionHostPath, "utf8");
     await writeGuestFile(sandbox, WORKER_EXTENSION_PATH, extension, "0644");
     await writeGuestFile(
@@ -312,73 +242,45 @@ export class WorkerManager {
   }
 }
 
-async function hasPinnedGuestRuntime(sandbox: SandboxInstance): Promise<boolean> {
-  const nodePresent = await execute(sandbox, ["/usr/bin/test", "-x", `${NODE_DIR}/bin/node`]);
-  if (!nodePresent.success) return false;
-  const node = await execute(sandbox, [`${NODE_DIR}/bin/node`, "--version"]);
-  if (!node.success || node.stdout.trim() !== `v${NODE_VERSION}`) return false;
-
-  const piPresent = await execute(sandbox, ["/usr/bin/test", "-x", PI_PATH]);
-  if (!piPresent.success) return false;
-  const pi = await execute(sandbox, [PI_PATH, "--version"], {
-    env: { PATH: GUEST_PATH },
-  });
-  if (
-    !pi.success ||
-    pi.stdout.trim() !== PI_PACKAGE.slice(PI_PACKAGE.lastIndexOf("@") + 1)
-  ) {
-    return false;
-  }
-
-  const git = await execute(sandbox, ["/usr/bin/test", "-x", "/usr/bin/git"]);
-  return git.success;
+async function startDocker(
+  sandbox: SandboxInstance,
+  startup: StartupOptions,
+): Promise<void> {
+  reportStartup(
+    startup,
+    "running-startup-scripts",
+    "detail",
+    "Starting Docker Engine",
+  );
+  await requireSuccess(
+    sandbox,
+    [
+      "/bin/sh",
+      "-c",
+      `${SERVICE_PATH} docker start && attempt=0; until ${DOCKER_PATH} info >/dev/null 2>&1; do attempt=$((attempt + 1)); [ "$attempt" -lt 30 ] || exit 1; sleep 1; done`,
+    ],
+    "Docker Engine startup",
+  );
 }
 
-async function installNode(sandbox: SandboxInstance): Promise<void> {
-  const asset = NODE_ASSETS[process.arch];
-  if (!asset) {
-    throw new Error(`Node.js bootstrap is not available for architecture ${process.arch}`);
-  }
-  const archive = `node-v${NODE_VERSION}-linux-${asset.arch}.tar.xz`;
+async function installProjectTools(
+  sandbox: SandboxInstance,
+  workdir: string,
+  environment: Readonly<Record<string, string>>,
+  startup: StartupOptions,
+): Promise<void> {
+  reportStartup(
+    startup,
+    "running-startup-scripts",
+    "detail",
+    "Installing project tools with mise",
+  );
   await requireSuccess(
     sandbox,
-    [
-      "/usr/bin/curl",
-      "--proto",
-      "=https",
-      "--tlsv1.2",
-      "-fsSL",
-      `https://nodejs.org/dist/v${NODE_VERSION}/${archive}`,
-      "-o",
-      "/tmp/node.tar.xz",
-    ],
-    "Node.js download",
+    [MISE_PATH, "install", "--yes"],
+    "mise install",
+    { cwd: workdir, env: environment },
   );
-  const digest = await execute(sandbox, ["/usr/bin/sha256sum", "/tmp/node.tar.xz"]);
-  if (!digest.success) {
-    throw new Error(`Guest Node.js checksum command exited with ${digest.code}`);
-  }
-  const actual = digest.stdout.trim().split(/\s+/, 1)[0];
-  if (actual !== asset.sha256) {
-    throw new Error(
-      `Node.js checksum mismatch: expected ${asset.sha256}, received ${actual ?? "empty output"}`,
-    );
-  }
-  await requireSuccess(sandbox, ["/bin/mkdir", "-p", NODE_DIR], "Node.js directory creation");
-  await requireSuccess(
-    sandbox,
-    [
-      "/bin/tar",
-      "-xJf",
-      "/tmp/node.tar.xz",
-      "--strip-components=1",
-      "-C",
-      NODE_DIR,
-    ],
-    "Node.js extraction",
-  );
-  await requireSuccess(sandbox, ["/bin/rm", "-f", "/tmp/node.tar.xz"], "Node.js cleanup");
-  await requireSuccess(sandbox, [`${NODE_DIR}/bin/node`, "--version"], "Node.js verification");
 }
 
 async function requireSuccess(

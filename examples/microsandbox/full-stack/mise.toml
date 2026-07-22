@@ -3,8 +3,6 @@ java = "temurin-21.0.11+10.0.LTS"
 maven = "3.9.16"
 node = "24.18.0"
 pnpm = "11.14.0"
-docker-cli = "29.6.2"
-docker-compose = "5.3.1"
 
 [tasks.install]
 description = "Install frontend and backend dependencies"
@@ -23,7 +21,11 @@ run = [
 
 [tasks.up]
 description = "Build and start the full stack"
-run = "docker-compose up --build"
+run = "docker-compose up --build --detach"
+
+[tasks.logs]
+description = "Follow application logs"
+run = "docker-compose logs --follow"
 
 [tasks.down]
 description = "Stop the full stack"

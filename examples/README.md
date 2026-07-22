@@ -15,14 +15,13 @@ From the repository root:
 (cd examples/microsandbox && pi -e ../../src/index.ts --pibox)
 ```
 
-The advanced Microsandbox example includes its own setup instructions:
+The advanced Microsandbox example runs its complete Compose stack inside the VM:
 
 ```sh
-cd examples/microsandbox/full-stack
-mise trust
-mise install
-mise run up
+(cd examples/microsandbox/full-stack && pi -e ../../../src/index.ts --pibox)
 ```
+
+Pibox starts Docker and installs the pinned mise tools. Once connected, run `!mise run install` and `!mise run up`.
 
 For Gondolin, first download the release archive matching the host architecture and import it as described in [`../images/README.md`](../images/README.md). Then run:
 

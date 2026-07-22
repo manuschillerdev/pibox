@@ -5,7 +5,7 @@ Pibox publishes two image families from one Debian Bookworm userspace definition
 - `ghcr.io/manuschillerdev/pibox-base:bookworm` is a multi-architecture OCI image used directly by Microsandbox and smolVM.
 - `pibox-gondolin-aarch64.tar.gz` and `pibox-gondolin-x86_64.tar.gz` are Gondolin guest assets derived from that OCI image.
 
-The OCI image contains the pinned Node.js and Pi runtime under `/opt/pibox`. Pibox verifies those versions at startup and provisions them only when a compatible prebuilt runtime is absent.
+The OCI image contains the pinned Node.js and Pi runtime under `/opt/pibox`, mise, Docker Engine, its matching CLI, Docker Compose, `iptables`, and `libatomic1`. Docker is configured with the nested-VM-compatible `vfs` storage driver. Pibox starts the daemon and runs `mise install` when the worker starts.
 
 ## Publishing
 
