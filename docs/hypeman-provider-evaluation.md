@@ -77,7 +77,7 @@ The relevant Pibox contracts are in [`src/auth-relay.ts`](../src/auth-relay.ts) 
 
 ### Transformation mismatch
 
-Pibox's Microsandbox and Gondolin integrations substitute a placeholder wherever the outgoing request contains it. Hypeman does not perform general placeholder substitution. It overwrites a configured HTTP header.
+Pibox's Microsandbox integration substitutes a placeholder wherever the outgoing request contains it. Hypeman does not perform general placeholder substitution. It overwrites a configured HTTP header.
 
 Pibox therefore needs an explicit Hypeman injection description for every supported model credential, for example:
 
@@ -101,7 +101,7 @@ Snapshots copy the full stored metadata, including its environment, and write sn
 - [snapshot metadata cloning](https://github.com/kernel/hypeman/blob/d60d4d103eba6cd9893dd1714b98716dc64b01a0/lib/instances/snapshot.go#L143-L155)
 - [snapshot metadata permissions](https://github.com/kernel/hypeman/blob/d60d4d103eba6cd9893dd1714b98716dc64b01a0/lib/snapshot/store.go#L58-L72)
 
-This is weaker than Pibox's Microsandbox and Gondolin security model. Production use requires a separate protected secret store or equivalent design with these properties:
+This is weaker than Pibox's Microsandbox security model. Production use requires a separate protected secret store or equivalent design with these properties:
 
 - secret values are not serialized into general instance metadata;
 - snapshot records do not duplicate secret material;

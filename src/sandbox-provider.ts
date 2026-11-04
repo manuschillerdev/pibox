@@ -4,7 +4,6 @@ import type {
 } from "./auth-relay.js";
 import type { SandboxProviderName } from "./config.js";
 import type { SandboxProvider } from "./sandbox.js";
-import { GondolinProvider } from "./sandboxes/gondolin.js";
 import { MicrosandboxProvider } from "./sandboxes/microsandbox.js";
 import { SmolvmProvider } from "./sandboxes/smolvm.js";
 
@@ -19,8 +18,6 @@ export function createSandboxProvider(
   switch (provider) {
     case "microsandbox":
       return new MicrosandboxProvider(credentials);
-    case "gondolin":
-      return new GondolinProvider(credentials);
     case "smolvm":
       return new SmolvmProvider(credentials);
   }

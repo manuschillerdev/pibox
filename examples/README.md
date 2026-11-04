@@ -6,7 +6,6 @@ Each provider directory contains native Pibox configuration. Run Pi from that di
 |---|---|---|---|
 | [`microsandbox/`](microsandbox/) | Microsandbox | `ghcr.io/manuschillerdev/pibox-base:bookworm` | Host-side TLS secret substitution with live rotation |
 | [`microsandbox/full-stack/`](microsandbox/full-stack/) | Microsandbox with a bind-mounted workspace | Pibox OCI image plus a Compose application | TanStack Start, Quarkus, and PostgreSQL development stack |
-| [`gondolin/`](gondolin/) | Gondolin | Imported `pibox-debian:bookworm` release asset | Host-side HTTP hook substitution with live rotation |
 | [`smolvm/`](smolvm/) | smolVM | `ghcr.io/manuschillerdev/pibox-base:bookworm` | Blocked unless `PIBOX_SMOLVM_AUTH_POLICY=guest-environment` is accepted |
 
 From the repository root:
@@ -22,12 +21,6 @@ The advanced Microsandbox example runs its complete Compose stack inside the VM:
 ```
 
 Pibox starts Docker and installs the pinned mise tools. Once connected, run `!mise run install` and `!mise run up`.
-
-For Gondolin, first download the release archive matching the host architecture and import it as described in [`../images/README.md`](../images/README.md). Then run:
-
-```sh
-(cd examples/gondolin && pi -e ../../src/index.ts --pibox)
-```
 
 For smolVM, configure `ghcr.io` under `[images.registries]` with `smolvm config registries init`, reference a `GHCR_TOKEN` environment variable, and then run:
 

@@ -5,7 +5,6 @@ Forking, snapshots, templates, and cloning are outside the Pibox lifecycle contr
 | Provider | Native mechanism | Source state | Processes preserved | Resume behavior |
 | --- | --- | --- | --- | --- |
 | smolVM | Live copy-on-write memory and disk fork | Running forkable VM | Yes | Warm clone |
-| Gondolin | qcow2 disk checkpoint and resume | Checkpointed VM disk | No | Cold boot |
 | Microsandbox | Sparse disk snapshot and `fromSnapshot()` | Stopped sandbox | No | Cold boot |
 
 ## smolVM
@@ -20,12 +19,6 @@ smolvm machine fork --golden golden --name worker-1
 A clone inherits guest RAM, disk state, and the running workload. The golden remains the fork base. Forks are constrained to the same architecture, hypervisor, and host, and nested forks are not supported.
 
 Source: [Pre-warmed browser pools via fork](https://github.com/smol-machines/smolvm/blob/main/examples/headless-browser/README.md)
-
-## Gondolin
-
-Gondolin checkpoints disk state into qcow2 storage and resumes each VM with an independent overlay. RAM and processes are not retained, so Pi and supporting services restart after resume.
-
-Source: [Gondolin storage snapshots](https://github.com/earendil-works/gondolin/blob/main/docs/sdk-storage.md)
 
 ## Microsandbox
 

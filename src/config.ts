@@ -4,7 +4,7 @@ import { parse } from "smol-toml";
 
 export const DEFAULT_CONFIG_NAME = "pibox.toml";
 
-export type SandboxProviderName = "microsandbox" | "gondolin" | "smolvm";
+export type SandboxProviderName = "microsandbox" | "smolvm";
 export type CacheScope = "repository" | "user";
 
 export interface CacheConfig {
@@ -177,11 +177,11 @@ function optionalStringValue(value: unknown, label: string): string | undefined 
 }
 
 function requireProvider(value: unknown): SandboxProviderName {
-  if (value === "microsandbox" || value === "gondolin" || value === "smolvm") {
+  if (value === "microsandbox" || value === "smolvm") {
     return value;
   }
   throw new Error(
-    '`provider` is required and must be "microsandbox", "gondolin", or "smolvm"',
+    '`provider` is required and must be "microsandbox" or "smolvm"',
   );
 }
 

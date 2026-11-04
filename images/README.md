@@ -1,52 +1,17 @@
 # Pibox images
 
-Pibox publishes two image families from one Debian Bookworm userspace definition:
-
-- `ghcr.io/manuschillerdev/pibox-base:bookworm` is a multi-architecture OCI image used directly by Microsandbox and smolVM.
-- `pibox-gondolin-aarch64.tar.gz` and `pibox-gondolin-x86_64.tar.gz` are Gondolin guest assets derived from that OCI image.
+Pibox publishes `ghcr.io/manuschillerdev/pibox-base:bookworm`, a multi-architecture Debian Bookworm OCI image used directly by Microsandbox and smolVM.
 
 The OCI image contains the pinned Node.js and Pi runtime under `/opt/pibox`, mise, Docker Engine, its matching CLI, Docker Compose, `iptables`, and `libatomic1`. Docker is configured with the nested-VM-compatible `vfs` storage driver. Pibox starts the daemon and runs `mise install` when the worker starts.
 
 ## Publishing
 
-Tagging a release or manually running `.github/workflows/publish-images.yml` publishes the OCI image and builds both Gondolin architectures. Tagged runs also attach the Gondolin archives to the matching GitHub release.
+Tagging a release or manually running `.github/workflows/publish-images.yml` publishes the OCI image for `linux/amd64` and `linux/arm64`.
 
-## Installing Gondolin assets
+## Local builds
 
-Download the release archive matching the host architecture, extract it, and import it into Gondolin's local image store:
-
-```sh
-version=v0.0.1
-case "$(uname -m)" in
-  arm64|aarch64) arch=aarch64 ;;
-  x86_64|amd64) arch=x86_64 ;;
-  *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
-esac
-
-gh release download "$version" \
-  --repo manuschillerdev/pibox \
-  --pattern "pibox-gondolin-$arch.tar.gz"
-tar -xzf "pibox-gondolin-$arch.tar.gz"
-npx gondolin image import "./pibox-gondolin-$arch" --tag pibox-debian:bookworm
-```
-
-## Local Gondolin builds
-
-On macOS, install the asset-builder prerequisites with Nanobrew:
+From the repository root:
 
 ```sh
-nb install e2fsprogs lz4
+docker build -t pibox-base:bookworm images/base
 ```
-
-Build and import the native architecture:
-
-```sh
-npx gondolin build \
-  --config images/gondolin/aarch64.json \
-  --output ./dist/pibox-gondolin-aarch64 \
-  --tag pibox-debian:bookworm
-```
-
-Use `images/gondolin/x86_64.json` on x86-64 hosts.
-
-Gondolin 0.12 uses its Alpine-based boot-asset pipeline for kernel and initramfs construction. The VM root filesystem and package environment come from the Pibox Debian OCI image.
