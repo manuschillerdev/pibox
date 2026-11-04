@@ -15,11 +15,18 @@ export default async function workerExtension(pi: ExtensionAPI): Promise<void> {
   const auth = JSON.parse(
     await readFile(join(profileDir, "auth.json"), "utf8"),
   ) as Record<string, GuestCredential>;
+  type ProviderConfig = Parameters<ExtensionAPI["registerProvider"]>[1];
+  const models = JSON.parse(
+    await readFile(join(profileDir, "pibox-models.json"), "utf8"),
+  ) as Record<string, Pick<ProviderConfig, "baseUrl" | "models">>;
   for (const [provider, credential] of Object.entries(auth)) {
     if (credential.type !== "api_key" || typeof credential.key !== "string") {
       continue;
     }
-    pi.registerProvider(provider, { apiKey: credential.key });
+    pi.registerProvider(provider, {
+      ...models[provider],
+      apiKey: credential.key,
+    });
   }
 
   pi.on("model_select", (event, ctx) => {

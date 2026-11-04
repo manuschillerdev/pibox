@@ -30,6 +30,10 @@ export interface RpcModel {
   [key: string]: unknown;
 }
 
+export interface RpcPromptAcceptance {
+  disposition: "started" | "queued" | "handled";
+}
+
 export interface RpcImage {
   type: "image";
   data: string;
@@ -128,8 +132,9 @@ export class PiRpcClient {
     return result.data as T;
   }
 
-  prompt(message: string, images?: RpcImage[]): Promise<void> {
-    return this.request<void>("prompt", {
+  prompt(message: string, images?: RpcImage[]): Promise<RpcPromptAcceptance | undefined> {
+    // Older guest Pi versions return no acceptance data.
+    return this.request<RpcPromptAcceptance | undefined>("prompt", {
       message,
       ...(images?.length ? { images } : {}),
     });

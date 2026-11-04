@@ -17,6 +17,7 @@ import {
   type PiboxConfig,
 } from "./config.js";
 import { deriveSandboxName } from "./names.js";
+import { guestModelCatalog } from "./model-catalog.js";
 import { PiRpcClient, type RpcSessionState } from "./pi-rpc.js";
 import {
   execute,
@@ -105,7 +106,7 @@ export class WorkerManager {
       ...caches.environment,
       MISE_TRUSTED_CONFIG_PATHS: config.pibox.workdir,
     };
-    const provider = createSandboxProvider(config.provider, prepared.credentials);
+    const provider = await createSandboxProvider(config.provider, prepared.credentials);
     reportStartup(startup, "reading-configuration", "completed");
     reportStartup(
       startup,
@@ -130,7 +131,7 @@ export class WorkerManager {
       reportStartup(startup, "creating-sandbox", "completed");
 
       reportStartup(startup, "running-startup-scripts", "started");
-      await this.bootstrap(sandbox, config, profileDir, relay, startup);
+      await this.bootstrap(sandbox, config, profileDir, relay, modelRegistry, startup);
       await startDocker(sandbox, startup);
       await installProjectTools(
         sandbox,
@@ -217,6 +218,7 @@ export class WorkerManager {
     config: PiboxConfig,
     profileDir: string,
     authRelay: AuthRelay,
+    modelRegistry: ModelRegistry,
     startup: StartupOptions,
   ): Promise<void> {
     reportStartup(
@@ -229,6 +231,19 @@ export class WorkerManager {
       sandbox,
       ["/bin/mkdir", "-p", config.pibox.workdir, profileDir, "/opt/pibox"],
       "create guest directories",
+    );
+
+    // Relay model metadata, not host auth/config files or credential headers.
+    // Published images can have an older catalog than the controller.
+    const providers = guestModelCatalog(
+      modelRegistry.getAvailable(),
+      authRelay.relayedProviders(),
+    );
+    await writeGuestFile(
+      sandbox,
+      `${profileDir}/pibox-models.json`,
+      `${JSON.stringify(providers)}\n`,
+      "0600",
     );
 
     const extension = await readFile(this.guestExtensionHostPath, "utf8");

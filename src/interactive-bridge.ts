@@ -53,6 +53,16 @@ export function registerInteractiveBridge(
     );
   }
 
+  pi.on("model_select", async (event, ctx) => {
+    const worker = registry.routed();
+    if (!worker) return;
+    try {
+      await worker.setModel(event.model.provider, event.model.id);
+    } catch (error) {
+      ctx.ui.notify(`Could not select worker model: ${errorMessage(error)}`, "error");
+    }
+  });
+
   pi.on("input", async (event, ctx) => {
     if (event.source === "extension") return { action: "continue" };
 
@@ -85,6 +95,17 @@ export function registerInteractiveBridge(
     });
 
     try {
+      // Also synchronize on the first prompt and after switching workers. Session
+      // restoration and worker creation do not emit a host model_select event.
+      if (ctx.model) {
+        const state = await worker.rpc.getState();
+        if (
+          state.model?.provider !== ctx.model.provider ||
+          state.model.id !== ctx.model.id
+        ) {
+          await worker.setModel(ctx.model.provider, ctx.model.id);
+        }
+      }
       const result = await worker.prompt(event.text, {
         ...(event.images?.length ? { images: event.images } : {}),
       });
@@ -165,7 +186,7 @@ function renderTranscriptEntry(
   if (!data) return new Text(theme.fg("error", "Invalid Pibox RPC entry"), 0, 0);
 
   if (data.role === "stream") {
-    return new StreamingTranscriptComponent(data.streamId, streamPreviews);
+    return new StreamingTranscriptComponent(data.streamId, streamPreviews, theme);
   }
 
   if (data.role === "user") {
@@ -199,15 +220,22 @@ class StreamingTranscriptComponent implements Component {
   constructor(
     private readonly streamId: string | undefined,
     private readonly streamPreviews: ReadonlyMap<string, StreamPreview>,
+    private readonly theme: Theme,
   ) {}
 
   render(width: number): string[] {
     const preview = this.streamId
       ? this.streamPreviews.get(this.streamId)
       : undefined;
-    if (!preview?.text) return [];
+    if (!preview) return [];
+    const activity = new Text(
+      this.theme.fg("dim", `… ${preview.activity}`),
+      0,
+      0,
+    ).render(width);
+    if (!preview.text) return activity;
     this.markdown.setText(`${preview.text}▌`);
-    return this.markdown.render(width);
+    return [...this.markdown.render(width), ...activity];
   }
 
   invalidate(): void {
@@ -243,6 +271,12 @@ function updateBridgeStatus(
 
 function updatePreview(preview: StreamPreview, record: RpcRecord): void {
   switch (record.type) {
+    case "message_start":
+      if (object(record.message)?.role === "assistant") {
+        preview.text = "";
+        preview.activity = "thinking";
+      }
+      break;
     case "message_update": {
       const event = object(record.assistantMessageEvent);
       if (event?.type === "thinking_delta") {
@@ -261,6 +295,7 @@ function updatePreview(preview: StreamPreview, record: RpcRecord): void {
       preview.activity = "responding";
       break;
     case "auto_retry_start":
+      preview.text = "";
       preview.activity = "retrying";
       break;
     case "compaction_start":

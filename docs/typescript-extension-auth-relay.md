@@ -6,9 +6,10 @@
 src/
   config.ts                 generic Pibox TOML loader
   sandbox.ts                minimal sandbox and process contracts
-  sandbox-provider.ts       two-provider switch
+  sandbox-provider.ts       two-provider lazy loader
   worker-manager.ts         naming, bootstrap, Pi launch, RPC, cleanup
   pi-rpc.ts                 provider-independent Pi JSONL RPC
+  model-catalog.ts          sanitized host model metadata for the guest
   model-credentials.ts      model credential formats and placeholders
   auth-relay.ts             host credential discovery and refresh
   sandboxes/
@@ -77,9 +78,11 @@ No pseudo-terminal is allocated. Host child-process stdout, stderr, and exit are
 
 The host model registry remains the credential source. `model-credentials.ts` defines provider credential formatting, including the JWT-shaped OpenAI Codex placeholder. The guest auth file contains environment references or synthetic placeholders, never a copied host auth file.
 
+The worker receives a sanitized catalog of models from relayed host providers so older guest images can select models present on the host. Host authorization, cookie and arbitrary custom headers are not copied; known non-authentication protocol headers are explicitly allowlisted. Interactive host model changes are serialized with prompt dispatch and credential refresh. Assistant text and failures are extracted from the current run's events rather than stale session history.
+
 ### Microsandbox
 
-The adapter creates secret placeholders before boot and installs real host values with Microsandbox secret modification. Rotation must be applied live with no restart conflict. Source environment variables are deleted during cleanup.
+The adapter installs real host values before boot and sets guest environment variables to their placeholders. Rotation supplies values directly through Microsandbox secret modification and must be applied live with no restart conflict. Real values are not passed through host environment variables.
 
 ### smolVM
 

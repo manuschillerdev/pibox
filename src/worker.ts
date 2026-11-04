@@ -12,6 +12,7 @@ const PROMPT_TIMEOUT_MS = 30 * 60 * 1000;
 const RPC_SHUTDOWN_REQUEST_TIMEOUT_MS = 2_000;
 const RPC_CLOSE_TIMEOUT_MS = 8_000;
 const SANDBOX_STOP_TIMEOUT_MS = 8_000;
+const ABORT_DRAIN_TIMEOUT_MS = 30_000;
 
 export interface WorkerPromptResult {
   accepted: true;
@@ -43,6 +44,8 @@ export class Worker {
   readonly relayedProviders: string[];
   readonly skippedProviders: StartedWorker["skippedProviders"];
   private closed = false;
+  private modelOperationTail: Promise<void> = Promise.resolve();
+  private modelOperationError: Error | undefined;
 
   constructor(private readonly started: StartedWorker) {
     this.id = started.id;
@@ -56,9 +59,16 @@ export class Worker {
     this.skippedProviders = started.skippedProviders;
   }
 
-  async prompt(
+  prompt(
     message: string,
     options: WorkerPromptOptions = {},
+  ): Promise<WorkerPromptResult> {
+    return this.withModelOperation(() => this.promptWithSelectedModel(message, options));
+  }
+
+  private async promptWithSelectedModel(
+    message: string,
+    options: WorkerPromptOptions,
   ): Promise<WorkerPromptResult> {
     this.assertOpen();
     const { signal, images } = options;
@@ -68,10 +78,21 @@ export class Worker {
     if (!provider) throw new Error(`Worker ${this.id} has no selected model`);
     await this.started.authRelay.refresh(provider);
 
+    // Scope results to this run: session history may end with an older error
+    // or answer when an extension handles a prompt without an assistant turn.
+    const turnMessages: unknown[] = [];
+    const unsubscribe = this.rpc.onEvent((record) => {
+      if (record.type === "message_end") turnMessages.push(record.message);
+    });
     const waitController = new AbortController();
+    let abortRequest: Promise<void> | undefined;
     const onAbort = (): void => {
       waitController.abort();
-      void this.rpc.abort().catch(() => undefined);
+      abortRequest ??= this.abortAndDrain().catch((error: unknown) => {
+        this.modelOperationError = asError(error);
+        throw error;
+      });
+      void abortRequest.catch(() => undefined);
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     const settled = this.rpc.waitForEvent(
@@ -79,15 +100,27 @@ export class Worker {
       PROMPT_TIMEOUT_MS,
       waitController.signal,
     );
+    // A cancellation can arrive while prompt preflight is still awaiting auth.
+    void settled.catch(() => undefined);
+    if (signal?.aborted) onAbort();
     try {
-      await this.rpc.prompt(message, images);
-      await settled;
+      if (signal?.aborted) throw new Error("Worker prompt was aborted");
+      const accepted = await this.rpc.prompt(message, images);
+      if (accepted?.disposition === "handled") {
+        waitController.abort();
+        await settled.catch(() => undefined);
+      } else {
+        await settled;
+      }
+      if (signal?.aborted) throw new Error("Worker prompt was aborted");
     } catch (error) {
       waitController.abort();
       await settled.catch(() => undefined);
+      if (abortRequest) await abortRequest;
       throw error;
     } finally {
       signal?.removeEventListener("abort", onAbort);
+      unsubscribe();
     }
 
     const [state, messageData, sessionStats] = await Promise.all([
@@ -98,7 +131,7 @@ export class Worker {
     return {
       accepted: true,
       state,
-      lastAssistantText: lastAssistantText(messageData.messages),
+      lastAssistantText: lastAssistantText(turnMessages),
       messages: messageData.messages,
       sessionStats,
     };
@@ -129,7 +162,11 @@ export class Worker {
     await this.rpc.abort();
   }
 
-  async setModel(provider: string, modelId: string): Promise<RpcModel> {
+  setModel(provider: string, modelId: string): Promise<RpcModel> {
+    return this.withModelOperation(() => this.selectModel(provider, modelId));
+  }
+
+  private async selectModel(provider: string, modelId: string): Promise<RpcModel> {
     this.assertOpen();
     await this.started.authRelay.refresh(provider);
     const available = await this.rpc.getAvailableModels();
@@ -217,6 +254,35 @@ export class Worker {
     if (primary) throw primary;
   }
 
+  private async abortAndDrain(): Promise<void> {
+    const controller = new AbortController();
+    const drained = this.rpc.waitForEvent(
+      "agent_settled", ABORT_DRAIN_TIMEOUT_MS, controller.signal,
+    );
+    void drained.catch(() => undefined);
+    try {
+      await this.rpc.abort();
+      const state = await this.rpc.getState();
+      if (state.isStreaming || state.isCompacting || state.pendingMessageCount > 0) {
+        await drained;
+      }
+    } finally {
+      controller.abort();
+      await drained.catch(() => undefined);
+    }
+  }
+
+  private withModelOperation<T>(operation: () => Promise<T>): Promise<T> {
+    // Serialize selection, credential refresh and prompt dispatch. A slower
+    // earlier selection must never overwrite a newer one or an active turn.
+    const pending = this.modelOperationTail.then(() => {
+      if (this.modelOperationError) throw this.modelOperationError;
+      return operation();
+    });
+    this.modelOperationTail = pending.then(() => undefined, () => undefined);
+    return pending;
+  }
+
   private assertOpen(): void {
     if (this.closed) throw new Error(`Worker ${this.id} is closed`);
   }
@@ -227,7 +293,14 @@ function lastAssistantText(messages: unknown[]): string | null {
     const message = messages[index];
     if (typeof message !== "object" || message === null) continue;
     const record = message as Record<string, unknown>;
-    if (record.role !== "assistant" || !Array.isArray(record.content)) continue;
+    if (record.role !== "assistant") continue;
+    if (record.stopReason === "error" || record.stopReason === "aborted") {
+      const detail = typeof record.errorMessage === "string"
+        ? record.errorMessage
+        : `model response ${record.stopReason}`;
+      throw new Error(`Worker model request failed: ${detail}`);
+    }
+    if (!Array.isArray(record.content)) continue;
     const text = record.content
       .filter(
         (part): part is { type: "text"; text: string } =>

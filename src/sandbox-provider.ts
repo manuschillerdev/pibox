@@ -4,21 +4,25 @@ import type {
 } from "./auth-relay.js";
 import type { SandboxProviderName } from "./config.js";
 import type { SandboxProvider } from "./sandbox.js";
-import { MicrosandboxProvider } from "./sandboxes/microsandbox.js";
-import { SmolvmProvider } from "./sandboxes/smolvm.js";
+import { prepareMicrosandboxNative } from "./sandboxes/microsandbox-native.js";
 
 export interface WorkerSandboxProvider extends SandboxProvider {
   readonly credentialBroker: CredentialBroker;
 }
 
-export function createSandboxProvider(
+export async function createSandboxProvider(
   provider: SandboxProviderName,
   credentials: PreparedCredential[],
-): WorkerSandboxProvider {
+): Promise<WorkerSandboxProvider> {
   switch (provider) {
-    case "microsandbox":
+    case "microsandbox": {
+      prepareMicrosandboxNative();
+      const { MicrosandboxProvider } = await import("./sandboxes/microsandbox.js");
       return new MicrosandboxProvider(credentials);
-    case "smolvm":
+    }
+    case "smolvm": {
+      const { SmolvmProvider } = await import("./sandboxes/smolvm.js");
       return new SmolvmProvider(credentials);
+    }
   }
 }

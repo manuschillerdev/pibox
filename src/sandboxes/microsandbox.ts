@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
   Sandbox,
   type ExecHandle,
@@ -62,10 +61,11 @@ export class MicrosandboxProvider implements SandboxProvider {
           .hostPermissions("mirror"));
     }
     for (const credential of this.credentials) {
+      builder = builder.env(credential.secretName, credential.placeholder);
       builder = builder.secret((secret: InstanceType<typeof SecretBuilder>) => {
         let current = secret
           .env(credential.secretName)
-          .value(`pibox-uninitialized-${randomUUID()}`)
+          .value(credential.lastAppliedValue)
           .placeholder(credential.placeholder);
         for (const host of credential.allowedHosts) current = current.allowHost(host);
         return current;
@@ -77,7 +77,7 @@ export class MicrosandboxProvider implements SandboxProvider {
       sandbox = await builder.create();
       this.credentialBroker.attach(sandbox);
       await this.credentialBroker.install(this.credentials);
-      return new MicrosandboxInstance(sandbox);
+      return new MicrosandboxInstance(sandbox, this.credentials);
     } catch (error) {
       this.credentialBroker.cleanup();
       if (sandbox) {
@@ -96,7 +96,10 @@ class MicrosandboxInstance implements SandboxInstance {
   private stopped = false;
   private removed = false;
 
-  constructor(private readonly sandbox: Sandbox) {}
+  constructor(
+    private readonly sandbox: Sandbox,
+    private readonly credentials: readonly PreparedCredential[],
+  ) {}
 
   async startProcess(
     command: readonly string[],
@@ -107,6 +110,11 @@ class MicrosandboxInstance implements SandboxInstance {
     const handle = await this.sandbox.execStreamWith(executable, (exec) => {
       let current = exec.args(args).stdinPipe();
       if (options.cwd !== undefined) current = current.cwd(options.cwd);
+      // Native exec does not reliably inherit the builder's guest environment.
+      // Pi's auth.json references these variables; only placeholders enter the VM.
+      for (const credential of this.credentials) {
+        current = current.env(credential.secretName, credential.placeholder);
+      }
       for (const [key, value] of Object.entries(options.env ?? {})) {
         current = current.env(key, value);
       }
@@ -212,45 +220,29 @@ class MicrosandboxCredentialBroker implements CredentialBroker {
     this.sandbox = sandbox;
   }
 
-  async install(credentials: PreparedCredential[]): Promise<void> {
+  install(credentials: PreparedCredential[]): Promise<void> {
     for (const credential of credentials) {
-      process.env[credential.sourceEnvName] = credential.lastAppliedValue;
-      try {
-        await this.apply(credential);
-        this.credentials.set(credential.provider, credential);
-      } catch (error) {
-        delete process.env[credential.sourceEnvName];
-        throw error;
-      }
+      // The builder already installed the initial value and guest placeholder.
+      this.credentials.set(credential.provider, credential);
     }
+    return Promise.resolve();
   }
 
   async refresh(credential: PreparedCredential, value: string): Promise<void> {
-    const previous = process.env[credential.sourceEnvName];
-    process.env[credential.sourceEnvName] = value;
-    try {
-      await this.apply(credential);
-    } catch (error) {
-      if (previous === undefined) delete process.env[credential.sourceEnvName];
-      else process.env[credential.sourceEnvName] = previous;
-      throw error;
-    }
+    await this.apply(credential, value);
   }
 
   cleanup(): void {
-    for (const credential of this.credentials.values()) {
-      delete process.env[credential.sourceEnvName];
-    }
     this.credentials.clear();
     this.sandbox = undefined;
   }
 
-  private async apply(credential: PreparedCredential): Promise<void> {
+  private async apply(credential: PreparedCredential, value: string): Promise<void> {
     if (!this.sandbox) throw new Error("Microsandbox credential broker is not attached");
     const plan = await this.sandbox.modify({
       secrets: {
         [credential.secretName]: {
-          env: credential.sourceEnvName,
+          value,
           placeholder: credential.placeholder,
           allowedHosts: credential.allowedHosts,
         },
