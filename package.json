@@ -12,7 +12,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint src guest",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "test:cache": "node tests/cache-deduplication.mjs"
   },
   "pi": {
     "extensions": [

@@ -17,7 +17,7 @@ const CACHE_PRESETS = {
     npm_config_cache: {},
   }),
   pnpm: preset("pnpm", {
-    PNPM_CONFIG_STORE_DIR: {},
+    npm_config_store_dir: {},
   }),
   yarn: preset("yarn", {
     YARN_CACHE_FOLDER: {},

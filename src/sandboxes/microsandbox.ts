@@ -48,16 +48,15 @@ export class MicrosandboxProvider implements SandboxProvider {
     assertNoCacheMountConflicts(config, mounts);
     let builder = applyBuilderConfig(Sandbox.builder(name), config);
     for (const mount of mounts) {
+      // Keep default stat virtualization: relaxed mode makes mise's tar
+      // extraction fail with ELOOP when restoring symlink timestamps (npm/npx).
       builder = builder.volume(mount.target, (volume: {
         bind(host: string): {
-          statVirtualization(policy: string): {
-            hostPermissions(policy: string): unknown;
-          };
+          hostPermissions(policy: string): unknown;
         };
       }) =>
         volume
           .bind(mount.source)
-          .statVirtualization("relaxed")
           .hostPermissions("mirror"));
     }
     for (const credential of this.credentials) {

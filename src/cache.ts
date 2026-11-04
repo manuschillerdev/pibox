@@ -10,6 +10,7 @@ import type { SandboxMount } from "./sandbox.js";
 
 const execFileAsync = promisify(execFile);
 const CACHE_DIRECTORY_MODE = 0o700;
+const GIT_IDENTITY_TIMEOUT_MS = 10_000;
 
 interface ResolvedCache {
   name: string;
@@ -28,6 +29,7 @@ interface ResolvedCaches {
 export async function resolveCaches(
   config: PiboxConfig,
   worktreeRoot: string,
+  options: { signal?: AbortSignal } = {},
 ): Promise<ResolvedCaches> {
   const definitions = Object.values(config.caches).sort((left, right) =>
     left.name.localeCompare(right.name),
@@ -44,7 +46,7 @@ export async function resolveCaches(
   await ensurePrivateDirectory(resolve(root, ".."));
   await ensurePrivateDirectory(root);
   const repositoryHash = definitions.some((cache) => cache.scope === "repository")
-    ? await hashRepositoryIdentity(worktreeRoot, config.directory)
+    ? await hashRepositoryIdentity(worktreeRoot, config.directory, options.signal)
     : undefined;
   const guestPaths = new Map<string, string>();
   const environment = new Map<string, { cache: string; value: string }>();
@@ -136,13 +138,14 @@ function cacheRoot(): string {
 async function hashRepositoryIdentity(
   worktreeRoot: string,
   fallbackDirectory: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   let identity: string;
   try {
     const { stdout } = await execFileAsync(
       "git",
       ["-C", worktreeRoot, "rev-parse", "--git-common-dir"],
-      { encoding: "utf8" },
+      { encoding: "utf8", timeout: GIT_IDENTITY_TIMEOUT_MS, killSignal: "SIGKILL", signal },
     );
     const value = stdout.trim();
     if (!value) throw new Error("empty git common directory");
@@ -150,7 +153,13 @@ async function hashRepositoryIdentity(
       ? value
       : resolve(worktreeRoot, value);
     identity = await realpath(commonDirectory);
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) {
+      throw new Error("Resolving the repository cache identity was aborted", { cause: error });
+    }
+    if (typeof error === "object" && error !== null && "killed" in error && error.killed) {
+      throw new Error("Git repository cache identity lookup timed out", { cause: error });
+    }
     identity = await realpath(fallbackDirectory);
   }
   return createHash("sha256").update(identity).digest("hex");
