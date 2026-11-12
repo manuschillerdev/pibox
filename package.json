@@ -21,9 +21,9 @@
     ]
   },
   "dependencies": {
-    "microsandbox": "0.6.6",
-    "smol-toml": "1.6.1",
-    "smolmachines": "1.6.6"
+    "microsandbox": "0.7.14",
+    "smol-toml": "1.9.1",
+    "smolmachines": "1.32.4"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
