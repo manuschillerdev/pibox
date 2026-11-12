@@ -12,4 +12,7 @@ test('Microsandbox trusts host CAs unless configuration opts out', () => {
   assert.deepEqual(withMicrosandboxDefaults({ network: { trustHostCAs: false } }), {
     network: { trustHostCAs: false },
   });
+  assert.deepEqual(withMicrosandboxDefaults({ trustHostCAs: false }), {
+    network: { trustHostCAs: false },
+  });
 });
