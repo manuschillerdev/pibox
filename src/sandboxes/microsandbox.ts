@@ -66,7 +66,7 @@ export class MicrosandboxProvider implements SandboxProvider {
           .env(credential.secretName)
           .value(credential.lastAppliedValue)
           .placeholder(credential.placeholder);
-        for (const host of credential.allowedHosts) current = current.allowHost(host);
+        for (const host of credential.allowedHosts) current = current.allow(host);
         return current;
       });
     }
