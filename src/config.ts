@@ -13,6 +13,7 @@ workdir = "/workspace"
 
 [sandbox]
 image = "ghcr.io/manuschillerdev/pibox-base:bookworm"
+trustHostCAs = true
 ephemeral = true
 replace = true
 `;

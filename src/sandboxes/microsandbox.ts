@@ -45,8 +45,9 @@ export class MicrosandboxProvider implements SandboxProvider {
     config: Record<string, unknown>,
     mounts: readonly SandboxMount[],
   ): Promise<SandboxInstance> {
-    assertNoCacheMountConflicts(config, mounts);
-    let builder = applyBuilderConfig(Sandbox.builder(name), config);
+    const effectiveConfig = withMicrosandboxDefaults(config);
+    assertNoCacheMountConflicts(effectiveConfig, mounts);
+    let builder = applyBuilderConfig(Sandbox.builder(name), effectiveConfig);
     for (const mount of mounts) {
       // Keep default stat virtualization: relaxed mode makes mise's tar
       // extraction fail with ELOOP when restoring symlink timestamps (npm/npx).
@@ -250,6 +251,12 @@ class MicrosandboxCredentialBroker implements CredentialBroker {
     });
     requireLiveRotation(plan, credential.secretName);
   }
+}
+
+export function withMicrosandboxDefaults(
+  config: Record<string, unknown>,
+): Record<string, unknown> {
+  return { trustHostCAs: true, ...config };
 }
 
 function assertNoCacheMountConflicts(
