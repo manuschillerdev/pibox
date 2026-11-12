@@ -6,7 +6,7 @@ Pibox is a Pi extension that creates complete Pi RPC workers in Microsandbox or 
 
 - Node.js 23.6.0 or newer
 - one supported sandbox runtime:
-  - Microsandbox 0.6.6;
+  - Microsandbox 0.7.14 (installed with this package; Pibox selects its matching bundled runtime rather than a stale runtime in `~/.microsandbox`);
   - smolmachines 1.6.6 plus a compatible `smolvm` CLI for duplex processes
 - at least one model credential in the host Pi profile
 
@@ -34,7 +34,7 @@ pi -e ./src/index.ts
 ```
 
 ```text
-/pibox-run --config examples/microsandbox/pibox.toml
+/pibox --config examples/microsandbox/pibox.toml
 /pibox-rm <worker-name-shown-at-startup>
 ```
 
@@ -102,10 +102,9 @@ PI_CODING_AGENT_DIR="$HOME/.pi/profiles/pibox-controller" pi --pibox
 
 Interactive commands:
 
-- `/pibox-run` creates a worker and routes prompts to it.
+- `/pibox` creates or enters the worker for the current worktree. Repeating it reconnects to that active worker without replacing its session.
 - `/pibox-leave` disconnects and stops the routed worker.
 - `/pibox-leave --keep-running` disconnects without stopping it.
-- `/pibox-enter [worker]` routes input to an active in-process worker.
 - `/pibox-stop [worker]` stops an active worker.
 - `/pibox-rm [worker]` stops and removes an active worker.
 

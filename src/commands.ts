@@ -11,30 +11,18 @@ export function registerCommands(
   pi: ExtensionAPI,
   registry: WorkerRegistry,
 ): void {
-  pi.registerCommand("pibox-run", {
-    description: "Create a Pibox worker and route interactive input to it",
+  pi.registerCommand("pibox", {
+    description: "Create or enter the Pibox worker for the current worktree",
     handler: command(async (args, ctx) => {
       const options = parseCreateOptions(splitArguments(args));
       const worker = await runWithStartupUi(ctx, (startup) =>
-        registry.createAndRoute(ctx.cwd, options, ctx.modelRegistry, startup),
+        registry.upsertAndRoute(ctx.cwd, options, ctx.modelRegistry, startup),
       );
       syncBridgeStatus(ctx, registry);
       ctx.ui.notify(
         `Worker ${worker.id} is ready and connected over RPC (${worker.worktreeRoot})`,
         "info",
       );
-    }),
-  });
-
-  pi.registerCommand("pibox-enter", {
-    description: "Route normal prompts and user bash commands to an active worker",
-    handler: command(async (args, ctx) => {
-      const argv = splitArguments(args);
-      if (argv.length > 1) throw new Error("Usage: /pibox-enter [worker]");
-      const name = await targetName(registry, ctx, argv[0]);
-      registry.route(name);
-      syncBridgeStatus(ctx, registry);
-      ctx.ui.notify(`Connected to ${name} over RPC`, "info");
     }),
   });
 

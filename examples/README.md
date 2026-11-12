@@ -1,6 +1,6 @@
 # Provider examples
 
-Each provider directory contains native Pibox configuration. Run Pi from that directory with `--pibox`, or pass its config path to `/pibox-run --config ...` or `worker_create`.
+Each provider directory contains native Pibox configuration. Run Pi from that directory with `--pibox`, or pass its config path to `/pibox --config ...` or `worker_create`.
 
 | Example | Sandbox | Image | Authentication policy |
 |---|---|---|---|

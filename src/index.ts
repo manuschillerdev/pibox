@@ -27,7 +27,7 @@ export default function piboxExtension(pi: ExtensionAPI): void {
     setBridgeStartingStatus(ctx);
     try {
       const worker = await runWithStartupUi(ctx, (startup) =>
-        registry.createAndRoute(ctx.cwd, {}, ctx.modelRegistry, startup),
+        registry.upsertAndRoute(ctx.cwd, {}, ctx.modelRegistry, startup),
       );
       syncBridgeStatus(ctx, registry);
       ctx.ui.notify(

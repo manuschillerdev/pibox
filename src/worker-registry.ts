@@ -8,7 +8,7 @@ import { Worker } from "./worker.js";
 
 export class WorkerRegistry {
   private readonly workers = new Map<string, Worker>();
-  private readonly creating = new Set<string>();
+  private readonly creating = new Map<string, Promise<Worker>>();
   private routedWorkerId: string | undefined;
 
   constructor(readonly manager = new WorkerManager()) {}
@@ -23,25 +23,29 @@ export class WorkerRegistry {
     if (this.workers.has(derived.name) || this.creating.has(derived.name)) {
       throw new Error(`Worker ${derived.name} already exists in this coordinator`);
     }
-    this.creating.add(derived.name);
-    try {
-      const worker = new Worker(
-        await this.manager.createWorker(cwd, options, modelRegistry, startup),
-      );
-      this.workers.set(worker.id, worker);
-      return worker;
-    } finally {
-      this.creating.delete(derived.name);
-    }
+    return await this.createDerived(cwd, options, modelRegistry, derived.name, startup);
   }
 
-  async createAndRoute(
+  async upsertAndRoute(
     cwd: string,
     options: WorkerCreateOptions,
     modelRegistry: ModelRegistry,
     startup: StartupOptions = {},
   ): Promise<Worker> {
-    const worker = await this.create(cwd, options, modelRegistry, startup);
+    const derived = await this.manager.configuredName(cwd, options);
+    const active = this.workers.get(derived.name);
+    if (active) return this.route(active.id);
+
+    const pending = this.creating.get(derived.name);
+    if (pending) return this.route((await pending).id);
+
+    const worker = await this.createDerived(
+      cwd,
+      options,
+      modelRegistry,
+      derived.name,
+      startup,
+    );
     return this.route(worker.id);
   }
 
@@ -107,6 +111,28 @@ export class WorkerRegistry {
       );
     if (errors.length > 0) {
       throw new Error(`Failed to clean up Pibox workers: ${errors.join("; ")}`);
+    }
+  }
+
+  private async createDerived(
+    cwd: string,
+    options: WorkerCreateOptions,
+    modelRegistry: ModelRegistry,
+    name: string,
+    startup: StartupOptions,
+  ): Promise<Worker> {
+    const creation = this.manager
+      .createWorker(cwd, options, modelRegistry, startup)
+      .then((started) => {
+        const worker = new Worker(started);
+        this.workers.set(worker.id, worker);
+        return worker;
+      });
+    this.creating.set(name, creation);
+    try {
+      return await creation;
+    } finally {
+      this.creating.delete(name);
     }
   }
 
