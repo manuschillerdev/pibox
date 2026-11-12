@@ -256,7 +256,13 @@ class MicrosandboxCredentialBroker implements CredentialBroker {
 export function withMicrosandboxDefaults(
   config: Record<string, unknown>,
 ): Record<string, unknown> {
-  return { trustHostCAs: true, ...config };
+  if (!isTable(config.network)) {
+    return { ...config, network: { trustHostCAs: true } };
+  }
+  return {
+    ...config,
+    network: { trustHostCAs: true, ...config.network },
+  };
 }
 
 function assertNoCacheMountConflicts(

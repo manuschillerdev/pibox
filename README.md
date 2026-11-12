@@ -54,12 +54,12 @@ workdir = "/workspace"
 
 [sandbox]
 image = "ghcr.io/manuschillerdev/pibox-base:bookworm"
-trustHostCAs = true
+network = { trustHostCAs = true }
 ephemeral = true
 replace = true
 ```
 
-`provider` must be `microsandbox` or `smolvm`. `[pibox]` controls the worker name and guest working directory. `[sandbox]` uses the selected provider's native names, units, and structures. Microsandbox enables `trustHostCAs` by default so guests trust the host's configured roots; set `trustHostCAs = false` to opt out.
+`provider` must be `microsandbox` or `smolvm`. `[pibox]` controls the worker name and guest working directory. `[sandbox]` uses the selected provider's native names, units, and structures. Microsandbox enables `network.trustHostCAs` by default so guests trust the host's configured roots; set `network = { trustHostCAs = false }` to opt out.
 
 ### Caches
 

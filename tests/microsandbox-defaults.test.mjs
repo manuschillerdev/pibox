@@ -7,9 +7,9 @@ const { withMicrosandboxDefaults } = await loadTypeScript('../src/sandboxes/micr
 test('Microsandbox trusts host CAs unless configuration opts out', () => {
   assert.deepEqual(withMicrosandboxDefaults({ image: 'alpine' }), {
     image: 'alpine',
-    trustHostCAs: true,
+    network: { trustHostCAs: true },
   });
-  assert.deepEqual(withMicrosandboxDefaults({ trustHostCAs: false }), {
-    trustHostCAs: false,
+  assert.deepEqual(withMicrosandboxDefaults({ network: { trustHostCAs: false } }), {
+    network: { trustHostCAs: false },
   });
 });
