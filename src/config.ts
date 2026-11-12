@@ -1,8 +1,21 @@
-import { realpath, readFile, stat } from "node:fs/promises";
+import { realpath, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, posix, resolve } from "node:path";
 import { parse } from "smol-toml";
 
 export const DEFAULT_CONFIG_NAME = "pibox.toml";
+
+export const DEFAULT_CONFIG = `provider = "microsandbox"
+
+[pibox]
+name = "pibox-demo"
+nameSuffix = "worktree"
+workdir = "/workspace"
+
+[sandbox]
+image = "ghcr.io/manuschillerdev/pibox-base:bookworm"
+ephemeral = true
+replace = true
+`;
 
 export type SandboxProviderName = "microsandbox" | "smolvm";
 export type CacheScope = "repository" | "user";
@@ -41,12 +54,21 @@ export async function resolveConfigPath(
     : await canonicalDirectory(cwd, "working directory");
   const input = options.config ?? DEFAULT_CONFIG_NAME;
   const candidate = isAbsolute(input) ? input : resolve(base, input);
+  if (options.config === undefined) await createDefaultConfig(candidate);
   try {
     return await realpath(candidate);
   } catch (error) {
     throw new Error(
       `Unable to resolve Pibox config ${candidate}: ${errorMessage(error)}`,
     );
+  }
+}
+
+async function createDefaultConfig(path: string): Promise<void> {
+  try {
+    await writeFile(path, DEFAULT_CONFIG, { encoding: "utf8", flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
 }
 
