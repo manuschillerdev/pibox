@@ -10,10 +10,11 @@ import { SmolvmNetwork } from "./smolvm-network.js";
 import {
   assertMachineIdentity, existingMachine, lockMachine, machineIdentity, machineLabels,
 } from "./smolvm-lifecycle.js";
-import type {
-  CredentialBroker,
-  PreparedCredential,
-} from "../auth-relay.js";
+import type { PreparedCredential } from "../auth-relay.js";
+import {
+  assertCredentialConfig, credentialArgs, credentialGuestEnvironment,
+  credentialHostEnvironment, SmolvmCredentialBroker,
+} from "./smolvm-credentials.js";
 import type {
   ProcessEvent,
   ProcessOptions,
@@ -24,8 +25,6 @@ import type {
 } from "../sandbox.js";
 
 const PROCESS_EXIT_TIMEOUT_MS = 2_000;
-const AUTH_POLICY_ENV = "PIBOX_SMOLVM_AUTH_POLICY";
-const ACCEPTED_AUTH_POLICY = "guest-environment";
 
 export class SmolvmProvider implements SandboxProvider {
   readonly credentialBroker = new SmolvmCredentialBroker();
@@ -37,29 +36,24 @@ export class SmolvmProvider implements SandboxProvider {
     config: Record<string, unknown>,
     mounts: readonly SandboxMount[],
   ): Promise<SandboxInstance> {
-    if (
-      this.credentials.length > 0 &&
-      process.env[AUTH_POLICY_ENV] !== ACCEPTED_AUTH_POLICY
-    ) {
-      throw new Error(
-        `smolVM model authentication is blocked because tokens enter the guest process environment; set ${AUTH_POLICY_ENV}=${ACCEPTED_AUTH_POLICY} only after explicitly accepting that weaker policy`,
-      );
-    }
-
     assertNoCacheMountConflicts(config, mounts);
+    assertCredentialConfig(config, this.credentials);
     const labels = machineLabels(config, mounts, this.credentials);
     const release = await lockMachine(name);
     let directory: string | undefined;
     let created = false;
+    let instance: SmolvmInstance | undefined;
+    const hostEnvironment = credentialHostEnvironment(this.credentials);
     try {
       const existing = await existingMachine(name, labels);
-      this.credentialBroker.install(this.credentials);
       if (existing) {
         if (existing.state === "stopped") {
-          await runSmolvm(["machine", "start", "--name", name]);
+          await runSmolvm(["machine", "start", "--name", name], hostEnvironment);
         }
-        return new SmolvmInstance(name, this.credentialBroker.secretEnvironment(),
+        instance = new SmolvmInstance(name, this.credentials, this.credentialBroker,
           existing.identity, release, existing.state === "running" ? "running" : "stopped");
+        await this.credentialBroker.attach(name, existing.identity, this.credentials);
+        return instance;
       }
       directory = await mkdtemp(join(tmpdir(), "pibox-smolvm-"));
       const smolfile = join(directory, "Smolfile");
@@ -68,20 +62,27 @@ export class SmolvmProvider implements SandboxProvider {
         "machine", "create", "--name", name, "--smolfile", smolfile,
         ...Object.entries(labels).flatMap(([key, value]) => ["--label", `${key}=${value}`]),
         ...mounts.flatMap((mount) => ["--volume", `${mount.source}:${mount.target}`]),
-      ]);
+        ...credentialArgs(this.credentials),
+      ], hostEnvironment);
       created = true;
-      await runSmolvm(["machine", "start", "--name", name]);
-      return new SmolvmInstance(name, this.credentialBroker.secretEnvironment(),
+      await runSmolvm(["machine", "start", "--name", name], hostEnvironment);
+      instance = new SmolvmInstance(name, this.credentials, this.credentialBroker,
         machineIdentity(labels), release, "new");
+      await this.credentialBroker.attach(name, machineIdentity(labels), this.credentials);
+      return instance;
     } catch (error) {
       // Failed create/reopen grants no deletion rights over persisted data.
-      if (created) {
-        await runSmolvm(["machine", "delete", "--name", name, "--force"])
-          .catch(() => undefined);
-      }
-      this.credentialBroker.cleanup();
-      await release();
-      throw new Error(`Failed to open or create smolVM machine ${name}: ${errorMessage(error)}`, {
+      const cleanupErrors: string[] = [];
+      try {
+        if (instance) await instance.rollback();
+        else if (created) await runSmolvm(["machine", "delete", "--name", name, "--force"]);
+      } catch (cleanup) { cleanupErrors.push(errorMessage(cleanup)); }
+      try { await this.credentialBroker.cleanup(); }
+      catch (cleanup) { cleanupErrors.push(errorMessage(cleanup)); }
+      // Ambiguous revocation/VM cleanup retains exclusive ownership for recovery.
+      if (!cleanupErrors.length) await release();
+      const suffix = cleanupErrors.length ? `; controller lock retained: ${cleanupErrors.join("; ")}` : "";
+      throw new Error(`Failed to open or create smolVM machine ${name}: ${errorMessage(error)}${suffix}`, {
         cause: error,
       });
     } finally {
@@ -97,7 +98,8 @@ class SmolvmInstance implements SandboxInstance {
 
   constructor(
     private readonly name: string,
-    private readonly secrets: readonly SecretEnvironment[],
+    private readonly credentials: readonly PreparedCredential[],
+    private readonly credentialBroker: SmolvmCredentialBroker,
     private readonly identity: string,
     private release: (() => Promise<void>) | undefined,
     private readonly origin: "new" | "running" | "stopped",
@@ -123,12 +125,13 @@ class SmolvmInstance implements SandboxInstance {
     for (const [key, value] of Object.entries(options.env ?? {})) {
       args.push("--env", `${key}=${value}`);
     }
-    for (const secret of this.secrets) {
-      args.push("--secret-env", `${secret.guestName}=${secret.hostName}`);
+    for (const [key, value] of Object.entries(credentialGuestEnvironment(this.credentials))) {
+      args.push("--env", `${key}=${value}`);
     }
     args.push("--", ...command);
     const child = spawn(smolvmCommand(), args, {
       stdio: ["pipe", "pipe", "pipe"],
+      env: credentialHostEnvironment(this.credentials),
     });
     return Promise.resolve(new SmolvmProcess(child));
   }
@@ -138,6 +141,7 @@ class SmolvmInstance implements SandboxInstance {
     this.release ??= await lockMachine(this.name);
     await assertMachineIdentity(this.name, this.identity);
     await runSmolvm(["machine", "stop", "--name", this.name]);
+    this.credentialBroker.detached();
     await this.release?.();
     this.release = undefined;
     this.stopped = true;
@@ -146,7 +150,8 @@ class SmolvmInstance implements SandboxInstance {
   async rollback(): Promise<void> {
     if (this.origin === "new") return this.remove();
     if (this.origin === "stopped") return this.stop();
-    // Failed bootstrap on an adopted running VM must not stop its services.
+    // Revoke this controller's keys before releasing a still-running VM.
+    await this.credentialBroker.cleanup();
     await this.release?.();
     this.release = undefined;
     this.stopped = true;
@@ -173,6 +178,7 @@ class SmolvmInstance implements SandboxInstance {
     }
     // A failed delete may leave a running guest: retain this lease for retry.
     await runSmolvm(["machine", "delete", "--name", this.name, "--force"]);
+    this.credentialBroker.detached();
     this.removed = true;
     this.stopped = true;
     await this.release();
@@ -302,55 +308,10 @@ function isTable(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-interface SecretEnvironment {
-  guestName: string;
-  hostName: string;
-}
-
-class SmolvmCredentialBroker implements CredentialBroker {
-  private readonly credentials = new Map<string, PreparedCredential>();
-
-  install(credentials: PreparedCredential[]): void {
-    for (const credential of credentials) {
-      process.env[credential.sourceEnvName] = credential.lastAppliedValue;
-      this.credentials.set(credential.provider, credential);
-    }
-  }
-
-  refresh(credential: PreparedCredential, value: string): Promise<void> {
-    if (!this.credentials.has(credential.provider)) {
-      return Promise.reject(
-        new Error(`smolVM credential ${credential.provider} is not installed`),
-      );
-    }
-    if (process.env[credential.sourceEnvName] !== value) {
-      return Promise.reject(
-        new Error(
-          `The host ${credential.provider} credential changed; recreate the smolVM worker because an existing guest process environment cannot be rotated`,
-        ),
-      );
-    }
-    return Promise.resolve();
-  }
-
-  secretEnvironment(): SecretEnvironment[] {
-    return [...this.credentials.values()].map((credential) => ({
-      guestName: credential.secretName,
-      hostName: credential.sourceEnvName,
-    }));
-  }
-
-  cleanup(): void {
-    for (const credential of this.credentials.values()) {
-      delete process.env[credential.sourceEnvName];
-    }
-    this.credentials.clear();
-  }
-}
-
-async function runSmolvm(args: readonly string[]): Promise<void> {
+async function runSmolvm(args: readonly string[], env?: NodeJS.ProcessEnv): Promise<void> {
   const child = spawn(smolvmCommand(), args, {
     stdio: ["ignore", "ignore", "pipe"],
+    ...(env ? { env } : {}),
     // Native defaults publish on loopback. Setting SMOLVM_PUBLISH_ADDR, even
     // to 127.0.0.1, opts into fleet policy and blocks guest-to-host access.
     // Preserve an explicit operator value; never silently weaken that policy.

@@ -31,7 +31,7 @@ export interface PreparedCredentialSet {
 
 export interface CredentialBroker {
   refresh(credential: PreparedCredential, value: string): Promise<void>;
-  cleanup(): void;
+  cleanup(): void | Promise<void>;
 }
 
 export class AuthRelay {
@@ -158,8 +158,8 @@ export class AuthRelay {
     return [...this.providerState.keys()].sort();
   }
 
-  cleanup(): void {
-    this.broker.cleanup();
+  async cleanup(): Promise<void> {
+    await this.broker.cleanup();
     for (const prepared of this.credentials.values()) {
       prepared.lastAppliedValue = "";
     }

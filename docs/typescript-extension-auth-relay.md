@@ -86,13 +86,13 @@ The adapter installs real host values before boot and sets guest environment var
 
 ### smolVM
 
-smolVM does not currently provide equivalent host-side HTTP substitution. Pibox therefore refuses authenticated worker creation unless the operator explicitly sets:
+smolVM 1.34.1 provides native host-side HTTPS credential substitution. Pibox creates exact-host bindings with `--credential` and supplies values through the machine's host-local `credentials.sock` control socket. Values never appear in CLI arguments, Smolfiles, guest files, or guest process environments. Native smolVM installs its public credential CA and TLS environment settings inside the guest.
 
-```sh
-export PIBOX_SMOLVM_AUTH_POLICY=guest-environment
-```
+Ordinary providers use native opaque placeholders. Codex receives a synthetic JWT carrying its account identifier, while a native `set-header=authorization` binding supplies the complete bearer header on the host. Worker Pi uses SSE rather than WebSockets, which the interceptor refuses. Requests to credential hosts are limited to HTTPS port 443 and 8 MiB bodies; responses stream.
 
-With that policy accepted, Pibox keeps each source value in a unique host environment variable and passes only `GUEST_VAR=HOST_VAR` references to `smolvm machine exec --secret-env`. The token enters the guest Pi process environment, so this policy is weaker than the Microsandbox relay. If a host credential changes, the worker must be recreated because an existing guest process environment cannot be rotated.
+Credential rotation waits for the native broker's acknowledgement before advancing host state. Cleanup replaces live values with empty values before releasing an adopted running machine, or discards the broker scope after a successful stop/removal. Failed revocation retains ownership for recovery. No `guest-environment` bypass exists. The authentication-policy fingerprint prevents reuse of machines created with plaintext injection.
+
+The broker restricts where credentials may be used, not what an allowed upstream returns: an upstream that echoes credentials can still disclose them to the guest.
 
 ## Bootstrap
 

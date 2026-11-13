@@ -231,6 +231,7 @@ export class Worker {
       await cleanup(retryErrors, () =>
         withDeadline(this.sandbox.stop(), SANDBOX_STOP_TIMEOUT_MS, `Worker ${this.id} sandbox stop`),
       );
+      await cleanup(retryErrors, async () => { await this.started.authRelay.cleanup(); });
       if (retryErrors.length) throw new Error(retryErrors.map((error) => error.message).join("; "));
       return;
     }
@@ -266,7 +267,7 @@ export class Worker {
         `Worker ${this.id} sandbox stop`,
       ),
     );
-    this.started.authRelay.cleanup();
+    await cleanup(cleanupErrors, async () => { await this.started.authRelay.cleanup(); });
 
     if (cleanupErrors.length > 0) {
       throw new Error(

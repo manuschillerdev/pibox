@@ -173,8 +173,7 @@ Owned routes, managed guest entries and native mappings are removed on unpublish
 ```sh
 npm install
 smolvm --version # 1.34.1 or newer
-# Only if you accept model credentials inside the guest:
-(cd examples/smolvm && PIBOX_SMOLVM_AUTH_POLICY=guest-environment pi --no-extensions -e ../../src/index.ts --pibox)
+(cd examples/smolvm && pi --no-extensions -e ../../src/index.ts --pibox)
 ```
 
 Start a guest server, then publish from the overlay:
@@ -200,7 +199,9 @@ The HTTP test overrides only the host lookup for its requests; it does **not** p
 Credential discovery remains in the worker layer. Provider adapters install credentials according to their native security model:
 
 - **Microsandbox:** TLS secret substitution with live rotation.
-- **smolVM:** blocked by default because the real token enters the guest process environment. To explicitly accept that weaker policy, set `PIBOX_SMOLVM_AUTH_POLICY=guest-environment`. Pibox then passes host environment references through `smolvm machine exec --secret-env`; it does not write the token to the guest auth file.
+- **smolVM:** native host-side credential substitution. Machine creation declares exact-host credential bindings; values and rotations go only to smolVM's host-local credential control socket. Guest processes receive native placeholders, never model-provider keys. Codex receives a synthetic JWT containing its account identifier; the native broker sets the real Authorization header on the host. Worker model requests use SSE because the native interceptor does not support WebSocket upgrades.
+
+No authentication opt-in is required. `PIBOX_SMOLVM_AUTH_POLICY` no longer enables guest-secret injection. Machines created with the earlier policy cannot be reused under the new security fingerprint; create a fresh VM or explicitly migrate its data. Credential substitution does not prevent an allowed upstream from echoing a key in a response. Native interception is limited to HTTPS port 443 and buffers request bodies up to 8 MiB; Pibox fails rather than falling back to plaintext injection.
 
 The local smolmachines SDK does not apply `MachineConfig.image` to the persistent guest rootfs. The smolVM adapter therefore uses the CLI with the opaque `[sandbox]` table serialized as a Smolfile, preserving a Debian image-backed machine for creation, lifecycle, and raw duplex execution. Existing-machine inspection and network publication use SDK `Machine.open()` without booting the machine. Startup uses CLI start only for a verified stopped machine; publication never restarts it. Neither path calls SDK create/connect. Do not add `-t`; Pi RPC requires unmodified pipes.
 

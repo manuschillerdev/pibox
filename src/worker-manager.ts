@@ -219,8 +219,10 @@ export class WorkerManager {
             : activeSandbox.remove());
         }
       }
-      authRelay?.cleanup();
-      if (!authRelay) provider.credentialBroker.cleanup();
+      await collectCleanup(cleanupErrors, async () => {
+        if (authRelay) await authRelay.cleanup();
+        else await provider.credentialBroker.cleanup();
+      });
       throw combinePrimaryAndCleanup(primaryError, cleanupErrors);
     }
   }
@@ -257,6 +259,11 @@ export class WorkerManager {
       `${JSON.stringify(providers)}\n`,
       "0600",
     );
+
+    if (config.provider === "smolvm") {
+      // Native credential interception supports streaming HTTP, not WebSockets.
+      await writeGuestFile(sandbox, `${profileDir}/settings.json`, '{"transport":"sse"}\n', "0600");
+    }
 
     const extension = await readFile(this.guestExtensionHostPath, "utf8");
     await writeGuestFile(sandbox, WORKER_EXTENSION_PATH, extension, "0644");

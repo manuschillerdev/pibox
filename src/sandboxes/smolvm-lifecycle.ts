@@ -21,7 +21,7 @@ export function machineLabels(
     credentials: credentials.map(({ provider, secretName, allowedHosts }) => ({
       provider, secretName, allowedHosts: [...allowedHosts].sort(),
     })).sort((a, b) => a.provider.localeCompare(b.provider)),
-    authPolicy: process.env.PIBOX_SMOLVM_AUTH_POLICY ?? null,
+    authPolicy: "native-credential-broker-v1",
     publishAddress: process.env.SMOLVM_PUBLISH_ADDR ?? null,
   };
   return { [OWNER]: "pibox", [CONFIG]: digest(canonical(policy)), [ID]: randomUUID() };
