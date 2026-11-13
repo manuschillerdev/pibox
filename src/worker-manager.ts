@@ -199,13 +199,25 @@ export class WorkerManager {
       };
     } catch (primaryError) {
       const cleanupErrors: Error[] = [];
+      let rpcCloseFailed = false;
       if (rpc) {
-        const activeRpc = rpc;
-        await collectCleanup(cleanupErrors, () => activeRpc.close());
+        try { await rpc.close(); }
+        catch (error) {
+          rpcCloseFailed = true;
+          cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
+        }
       }
       if (sandbox) {
         const activeSandbox = sandbox;
-        await collectCleanup(cleanupErrors, () => activeSandbox.remove());
+        if (rpcCloseFailed && activeSandbox.rollback) {
+          cleanupErrors.push(new Error(
+            `Sandbox ${name} and its controller lock were retained because guest RPC closure could not be confirmed. Verify that controller and guest RPC have exited before recovering ownership; retrying startup identifies the lock path.`,
+          ));
+        } else {
+          await collectCleanup(cleanupErrors, () => activeSandbox.rollback
+            ? activeSandbox.rollback()
+            : activeSandbox.remove());
+        }
       }
       authRelay?.cleanup();
       if (!authRelay) provider.credentialBroker.cleanup();

@@ -61,9 +61,14 @@ test('a handled prompt cannot return an old assistant answer or old failure', as
   }
 });
 
-test('assistant text comes from the current run even if history was compacted', async () => {
-  const f = fixture({ history: [], reply: { role: 'assistant', content: [{ type: 'text', text: 'fresh answer' }], stopReason: 'stop' } });
-  assert.equal((await f.worker.prompt('test')).lastAssistantText, 'fresh answer');
+test('assistant text and thinking come from the current run even if history was compacted', async () => {
+  const f = fixture({ history: [], reply: { role: 'assistant', content: [
+    { type: 'thinking', thinking: 'considering the request' },
+    { type: 'text', text: 'fresh answer' },
+  ], stopReason: 'stop' } });
+  const result = await f.worker.prompt('test');
+  assert.equal(result.lastAssistantText, 'fresh answer');
+  assert.equal(result.lastAssistantThinking, 'considering the request');
 });
 
 test('failed model selection does not poison later selections', async () => {
@@ -125,4 +130,23 @@ test('catalog handles prototype-like provider names and never relays auth header
   assert.equal(known['github-copilot'].models[0].headers['User-Agent'], 'GitHubCopilotChat/0.35.0');
   assert.ok(!JSON.stringify(known).includes('secret'));
   assert.deepEqual(Object.keys(guestModelCatalog([{ ...model, provider: 'other' }], ['allowed'])), []);
+});
+
+test('thinking changes serialize with prompts and prompt options restore the selected host level', async () => {
+  const f = fixture();
+  const levels = [];
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  f.rpc.setThinkingLevel = async level => {
+    levels.push(level);
+    if (levels.length === 1) await gate;
+  };
+  const selection = f.worker.setThinkingLevel('low');
+  const prompt = f.worker.prompt('test', { thinkingLevel: 'high' });
+  const next = f.worker.setThinkingLevel('off');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(levels, ['low']);
+  release();
+  await Promise.all([selection, prompt, next]);
+  assert.deepEqual(levels, ['low', 'high', 'off']);
 });

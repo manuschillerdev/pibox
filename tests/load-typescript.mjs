@@ -10,7 +10,8 @@ export async function typescriptModuleUrl(path) {
   let source = ts.transpileModule(await readFile(url, 'utf8'), {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
   }).outputText;
-  const imports = [...source.matchAll(/\bfrom\s+(['"])([^'"]+)\1/g)];
+  source = source.replace(/\bimport\.meta\.url\b/g, JSON.stringify(url.href));
+  const imports = [...source.matchAll(/\b(?:from\s+|import\s*\(\s*)(['"])([^'"]+)\1/g)];
   for (const match of imports) {
     const specifier = match[2];
     if (specifier.startsWith('node:')) continue;
@@ -23,7 +24,7 @@ export async function typescriptModuleUrl(path) {
     } else {
       resolved = import.meta.resolve(specifier);
     }
-    source = source.replace(match[0], `from ${JSON.stringify(resolved)}`);
+    source = source.replace(match[0], match[0].replace(`${match[1]}${specifier}${match[1]}`, JSON.stringify(resolved)));
   }
   return 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
 }

@@ -5,8 +5,12 @@ import type {
   RpcModel,
   RpcRecord,
   RpcSessionState,
+  RpcThinkingLevel,
 } from "./pi-rpc.js";
 import type { StartedWorker } from "./worker-manager.js";
+import { WorkerNetwork } from "./network.js";
+import { EmbeddedPortless } from "./network-portless.js";
+import { WorkerVscode } from "./vscode.js";
 
 const PROMPT_TIMEOUT_MS = 30 * 60 * 1000;
 const RPC_SHUTDOWN_REQUEST_TIMEOUT_MS = 2_000;
@@ -18,6 +22,8 @@ export interface WorkerPromptResult {
   accepted: true;
   state: RpcSessionState;
   lastAssistantText: string | null;
+  /** Provider-emitted thinking across successful assistant turns in this prompt. */
+  lastAssistantThinking: string | null;
   messages: unknown[];
   sessionStats: unknown;
 }
@@ -31,6 +37,7 @@ export interface WorkerStateResult {
 export interface WorkerPromptOptions {
   signal?: AbortSignal;
   images?: RpcImage[];
+  thinkingLevel?: RpcThinkingLevel;
 }
 
 export class Worker {
@@ -44,10 +51,24 @@ export class Worker {
   readonly relayedProviders: string[];
   readonly skippedProviders: StartedWorker["skippedProviders"];
   private closed = false;
+  private workerNetwork: WorkerNetwork | undefined;
+  private workerVscode: WorkerVscode | undefined;
+
+  get vscode(): WorkerVscode {
+    this.assertOpen();
+    return this.workerVscode ??= new WorkerVscode(
+      this.sandbox, this.network, this.started.config.provider, this.started.config.pibox.workdir,
+    );
+  }
+
+  get network(): WorkerNetwork {
+    this.assertOpen();
+    return this.workerNetwork ??= new WorkerNetwork(this.sandbox, this.name, this.worktreeRoot, this.networkProxy);
+  }
   private modelOperationTail: Promise<void> = Promise.resolve();
   private modelOperationError: Error | undefined;
 
-  constructor(private readonly started: StartedWorker) {
+  constructor(private readonly started: StartedWorker, private readonly networkProxy = new EmbeddedPortless()) {
     this.id = started.id;
     this.name = started.name;
     this.sandbox = started.sandbox;
@@ -77,6 +98,11 @@ export class Worker {
     const provider = before.model?.provider;
     if (!provider) throw new Error(`Worker ${this.id} has no selected model`);
     await this.started.authRelay.refresh(provider);
+    // Apply after model selection, in the same serialized operation as prompt.
+    // The guest profile has independent defaults; Pi clamps to model capability.
+    if (options.thinkingLevel !== undefined && before.thinkingLevel !== options.thinkingLevel) {
+      await this.rpc.setThinkingLevel(options.thinkingLevel);
+    }
 
     // Scope results to this run: session history may end with an older error
     // or answer when an extension handles a prompt without an assistant turn.
@@ -131,7 +157,7 @@ export class Worker {
     return {
       accepted: true,
       state,
-      lastAssistantText: lastAssistantText(turnMessages),
+      ...lastAssistantContent(turnMessages),
       messages: messageData.messages,
       sessionStats,
     };
@@ -166,6 +192,13 @@ export class Worker {
     return this.withModelOperation(() => this.selectModel(provider, modelId));
   }
 
+  setThinkingLevel(level: RpcThinkingLevel): Promise<void> {
+    return this.withModelOperation(async () => {
+      this.assertOpen();
+      await this.rpc.setThinkingLevel(level);
+    });
+  }
+
   private async selectModel(provider: string, modelId: string): Promise<RpcModel> {
     this.assertOpen();
     await this.started.authRelay.refresh(provider);
@@ -191,9 +224,20 @@ export class Worker {
   }
 
   async shutdown(): Promise<void> {
-    if (this.closed) return;
+    if (this.closed) {
+      const retryErrors: Error[] = [];
+      await cleanup(retryErrors, async () => { await this.workerVscode?.close(); });
+      await cleanup(retryErrors, async () => { await this.workerNetwork?.close(); });
+      await cleanup(retryErrors, () =>
+        withDeadline(this.sandbox.stop(), SANDBOX_STOP_TIMEOUT_MS, `Worker ${this.id} sandbox stop`),
+      );
+      if (retryErrors.length) throw new Error(retryErrors.map((error) => error.message).join("; "));
+      return;
+    }
     this.closed = true;
     const cleanupErrors: Error[] = [];
+    await cleanup(cleanupErrors, async () => { await this.workerVscode?.close(); });
+    await cleanup(cleanupErrors, async () => { await this.workerNetwork?.close(); });
 
     try {
       const state = await withDeadline(
@@ -288,7 +332,10 @@ export class Worker {
   }
 }
 
-function lastAssistantText(messages: unknown[]): string | null {
+function lastAssistantContent(messages: unknown[]): Pick<
+  WorkerPromptResult,
+  "lastAssistantText" | "lastAssistantThinking"
+> {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (typeof message !== "object" || message === null) continue;
@@ -301,19 +348,35 @@ function lastAssistantText(messages: unknown[]): string | null {
       throw new Error(`Worker model request failed: ${detail}`);
     }
     if (!Array.isArray(record.content)) continue;
-    const text = record.content
-      .filter(
-        (part): part is { type: "text"; text: string } =>
-          typeof part === "object" &&
-          part !== null &&
-          (part as Record<string, unknown>).type === "text" &&
-          typeof (part as Record<string, unknown>).text === "string",
-      )
-      .map((part) => part.text)
+    const content = record.content
+      .filter((part): part is Record<string, unknown> =>
+        typeof part === "object" && part !== null,
+      );
+    const text = content
+      .filter((part) => part.type === "text" && typeof part.text === "string")
+      .map((part) => part.text as string)
       .join("");
-    return text || null;
+    // Tool-calling turns commonly contain all the reasoning, while the final
+    // assistant message contains only the answer. Never pull in old history or
+    // partial failed retry messages.
+    const thinking = messages.flatMap((entry) => {
+      if (typeof entry !== "object" || entry === null) return [];
+      const assistant = entry as Record<string, unknown>;
+      if (assistant.role !== "assistant" || assistant.stopReason === "error" ||
+          assistant.stopReason === "aborted" || !Array.isArray(assistant.content)) return [];
+      return assistant.content.flatMap((part: unknown) => {
+        if (typeof part !== "object" || part === null) return [];
+        const block = part as Record<string, unknown>;
+        return block.type === "thinking" && typeof block.thinking === "string"
+          ? [block.thinking] : [];
+      });
+    }).join("\n\n");
+    return {
+      lastAssistantText: text || null,
+      lastAssistantThinking: thinking || null,
+    };
   }
-  return null;
+  return { lastAssistantText: null, lastAssistantThinking: null };
 }
 
 async function withDeadline<T>(

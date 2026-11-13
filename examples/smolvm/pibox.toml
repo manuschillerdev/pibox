@@ -10,5 +10,6 @@ image = "ghcr.io/manuschillerdev/pibox-base:bookworm"
 cpus = 2
 memory = 2048
 net = true
+net_backend = "virtio-net"
 storage = 20
 overlay = 10

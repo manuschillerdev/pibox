@@ -17,6 +17,7 @@ test('chat shows activity before text, and clears previous assistant/retry previ
     onEvent: listener => { emit = listener; return () => {}; },
   };
   const pi = {
+    getThinkingLevel: () => 'off',
     on: (name, handler) => handlers.set(name, handler),
     registerEntryRenderer: (_type, render) => { renderer = render; },
     appendEntry: (_type, entry) => entries.push(entry),
@@ -30,6 +31,8 @@ test('chat shows activity before text, and clears previous assistant/retry previ
   assert.match(component.render(80).join('\n'), /thinking/);
   emit({ type: 'tool_execution_start', toolName: 'read' });
   assert.match(component.render(80).join('\n'), /running read/);
+  emit({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: 'working it out' } });
+  assert.match(component.render(80).join('\n'), /working it out/);
   emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'old attempt' } });
   emit({ type: 'auto_retry_start' });
   const retry = component.render(80).join('\n');

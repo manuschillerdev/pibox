@@ -1,0 +1,48 @@
+{
+  "name": "pibox-ssh",
+  "displayName": "Pibox SSH",
+  "description": "Open Pibox workspaces with VS Code Remote - SSH.",
+  "version": "0.1.0",
+  "publisher": "pibox",
+  "license": "UNLICENSED",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "main": "./src/extension.cjs",
+  "extensionKind": ["ui"],
+  "extensionDependencies": ["ms-vscode-remote.remote-ssh"],
+  "capabilities": {
+    "untrustedWorkspaces": { "supported": false },
+    "virtualWorkspaces": false
+  },
+  "scripts": {
+    "test": "node --test test/*.test.cjs",
+    "package": "npx --yes @vscode/vsce@3.6.2 package --allow-missing-repository"
+  },
+  "contributes": {
+    "commands": [
+      { "command": "pibox.connect", "title": "Pibox: Connect to Workspace via SSH" },
+      { "command": "pibox.addConnection", "title": "Pibox: Add SSH Connection" }
+    ],
+    "configuration": {
+      "title": "Pibox SSH",
+      "properties": {
+        "pibox.ssh.connections": {
+          "type": "array",
+          "default": [],
+          "scope": "application",
+          "description": "SSH config aliases and absolute guest workspace paths. Manage credentials and host-key verification in your SSH configuration.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "host", "path"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "description": "Connection label." },
+              "host": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$", "description": "Host alias from your SSH config (not user@host or host:port)." },
+              "path": { "type": "string", "pattern": "^/", "default": "/workspace", "description": "Absolute folder path inside the guest." }
+            }
+          }
+        }
+      }
+    }
+  }
+}

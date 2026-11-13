@@ -1,3 +1,11 @@
+/** A failed native publication whose exact endpoint still needs cleanup. */
+export class PendingTcpPublicationError extends Error {
+  constructor(readonly hostPort: number, readonly guestPort: number, cause: unknown) {
+    super(`Publishing failed; native port 127.0.0.1:${hostPort} may remain active. Retry unpublish to finish cleanup.`, { cause });
+    this.name = "PendingTcpPublicationError";
+  }
+}
+
 export interface SandboxMount {
   source: string;
   target: string;
@@ -12,6 +20,9 @@ export interface SandboxProvider {
 }
 
 export interface SandboxInstance {
+  /** Native live TCP publication. Absent when the provider is not supported. */
+  publishTcp?(guestPort: number): Promise<number>;
+  unpublishTcp?(hostPort: number, guestPort: number): Promise<void>;
   startProcess(
     command: readonly string[],
     options?: ProcessOptions,
@@ -19,6 +30,8 @@ export interface SandboxInstance {
 
   stop(): Promise<void>;
   remove(): Promise<void>;
+  /** Undo failed startup without deleting a reused persistent sandbox. */
+  rollback?(): Promise<void>;
 }
 
 export interface ProcessOptions {

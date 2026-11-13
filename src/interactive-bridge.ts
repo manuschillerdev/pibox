@@ -22,6 +22,7 @@ interface RpcTranscriptEntry {
   workerId: string;
   role: "user" | "assistant" | "error" | "stream";
   text: string;
+  thinking?: string;
   imageCount?: number;
   provider?: string;
   modelId?: string;
@@ -30,6 +31,8 @@ interface RpcTranscriptEntry {
 
 interface StreamPreview {
   text: string;
+  thinking: string;
+  completedThinking: string[];
   activity: string;
 }
 
@@ -63,6 +66,16 @@ export function registerInteractiveBridge(
     }
   });
 
+  pi.on("thinking_level_select", async (event, ctx) => {
+    const worker = registry.routed();
+    if (!worker) return;
+    try {
+      await worker.setThinkingLevel(event.level);
+    } catch (error) {
+      ctx.ui.notify(`Could not select worker thinking level: ${errorMessage(error)}`, "error");
+    }
+  });
+
   pi.on("input", async (event, ctx) => {
     if (event.source === "extension") return { action: "continue" };
 
@@ -80,7 +93,7 @@ export function registerInteractiveBridge(
     });
 
     const streamId = randomUUID();
-    const preview: StreamPreview = { text: "", activity: "thinking" };
+    const preview: StreamPreview = { text: "", thinking: "", completedThinking: [], activity: "thinking" };
     streamPreviews.set(streamId, preview);
     appendTranscriptEntry(pi, supportsEntryRenderer, {
       workerId: worker.id,
@@ -107,6 +120,7 @@ export function registerInteractiveBridge(
         }
       }
       const result = await worker.prompt(event.text, {
+        thinkingLevel: pi.getThinkingLevel(),
         ...(event.images?.length ? { images: event.images } : {}),
       });
       const model = result.state.model;
@@ -115,6 +129,7 @@ export function registerInteractiveBridge(
         workerId: worker.id,
         role: "assistant",
         text: result.lastAssistantText ?? "_(Worker returned no assistant text.)_",
+        ...(result.lastAssistantThinking ? { thinking: result.lastAssistantThinking } : {}),
         ...(model ? { provider: model.provider, modelId: model.id } : {}),
       });
     } catch (error) {
@@ -210,6 +225,14 @@ function renderTranscriptEntry(
     data.provider && data.modelId ? ` · ${data.provider}/${data.modelId}` : "";
   const output = new Container();
   output.addChild(new Text(theme.fg("dim", `${data.workerId}${model}`), 0, 0));
+  if (data.thinking) {
+    output.addChild(
+      new Markdown(data.thinking, 0, 0, getMarkdownTheme(), {
+        color: (text) => theme.fg("thinkingText", text),
+        italic: true,
+      }),
+    );
+  }
   output.addChild(new Markdown(data.text, 0, 0, getMarkdownTheme()));
   return output;
 }
@@ -233,9 +256,17 @@ class StreamingTranscriptComponent implements Component {
       0,
       0,
     ).render(width);
-    if (!preview.text) return activity;
-    this.markdown.setText(`${preview.text}▌`);
-    return [...this.markdown.render(width), ...activity];
+    const content: string[] = [];
+    const thinking = [...preview.completedThinking, preview.thinking].filter(Boolean).join("\n\n");
+    if (thinking) {
+      this.markdown.setText(thinking);
+      content.push(...this.markdown.render(width));
+    }
+    if (preview.text) {
+      this.markdown.setText(`${preview.text}▌`);
+      content.push(...this.markdown.render(width));
+    }
+    return content.length > 0 ? [...content, ...activity] : activity;
   }
 
   invalidate(): void {
@@ -274,6 +305,7 @@ function updatePreview(preview: StreamPreview, record: RpcRecord): void {
     case "message_start":
       if (object(record.message)?.role === "assistant") {
         preview.text = "";
+        preview.thinking = "";
         preview.activity = "thinking";
       }
       break;
@@ -281,9 +313,27 @@ function updatePreview(preview: StreamPreview, record: RpcRecord): void {
       const event = object(record.assistantMessageEvent);
       if (event?.type === "thinking_delta") {
         preview.activity = "thinking";
+        if (typeof event.delta === "string") preview.thinking += event.delta;
       } else if (event?.type === "text_delta" && typeof event.delta === "string") {
         preview.activity = "responding";
         preview.text += event.delta;
+      }
+      break;
+    }
+    case "message_end": {
+      const message = object(record.message);
+      if (message?.role === "assistant") {
+        // message_end is authoritative, including blocks providers didn't
+        // stream as deltas. Preserve successful reasoning across tool turns.
+        if (message.stopReason !== "error" && message.stopReason !== "aborted" && Array.isArray(message.content)) {
+          for (const part of message.content) {
+            const block = object(part);
+            if (block?.type === "thinking" && typeof block.thinking === "string") {
+              preview.completedThinking.push(block.thinking);
+            }
+          }
+        }
+        preview.thinking = "";
       }
       break;
     }
@@ -296,6 +346,7 @@ function updatePreview(preview: StreamPreview, record: RpcRecord): void {
       break;
     case "auto_retry_start":
       preview.text = "";
+      preview.thinking = "";
       preview.activity = "retrying";
       break;
     case "compaction_start":

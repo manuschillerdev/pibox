@@ -14,8 +14,11 @@ export interface RpcResponse extends RpcRecord {
   error?: string;
 }
 
+export type RpcThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
 export interface RpcSessionState {
   model: RpcModel | null;
+  thinkingLevel?: RpcThinkingLevel;
   isStreaming: boolean;
   isCompacting: boolean;
   pendingMessageCount: number;
@@ -59,7 +62,7 @@ type RecordListener = (record: RpcRecord) => void;
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const BASH_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
-const PROCESS_EXIT_TIMEOUT_MS = 2_000;
+const PROCESS_CLOSE_TIMEOUT_MS = 7_000;
 const STDERR_LIMIT_BYTES = 8 * 1024;
 
 export class PiRpcClient {
@@ -73,6 +76,8 @@ export class PiRpcClient {
   private nextRequestId = 1;
   private closed = false;
   private closing = false;
+  private exited = false;
+  private closePromise: Promise<void> | undefined;
   private stderrTail = "";
   private writeTail: Promise<void> = Promise.resolve();
 
@@ -160,6 +165,10 @@ export class PiRpcClient {
     return this.request<RpcModel>("set_model", { provider, modelId });
   }
 
+  setThinkingLevel(level: RpcThinkingLevel): Promise<void> {
+    return this.request<void>("set_thinking_level", { level });
+  }
+
   cycleModel(): Promise<{
     model: RpcModel;
     thinkingLevel: string;
@@ -225,13 +234,32 @@ export class PiRpcClient {
     });
   }
 
-  async close(): Promise<void> {
-    if (this.closed || this.closing) return;
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    if (this.exited) return Promise.resolve();
     this.closing = true;
+    // Transport failure is not proof of termination. Keep the same outcome for
+    // all callers, including a later cleanup after an automatic stream failure.
+    this.closePromise = this.closeProcess();
+    return this.closePromise;
+  }
+
+  private async closeProcess(): Promise<void> {
+    let timeout: NodeJS.Timeout | undefined;
     try {
-      await this.process.close();
-      await exitsWithin(this.exitPromise, PROCESS_EXIT_TIMEOUT_MS);
+      await Promise.race([
+        (async () => {
+          await this.process.close();
+          await this.exitPromise;
+        })(),
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => reject(this.processExitError(
+            `termination could not be confirmed within ${PROCESS_CLOSE_TIMEOUT_MS}ms`,
+          )), PROCESS_CLOSE_TIMEOUT_MS);
+        }),
+      ]);
     } finally {
+      if (timeout) clearTimeout(timeout);
       this.terminate(new Error("Worker Pi RPC process was closed"));
     }
   }
@@ -253,25 +281,39 @@ export class PiRpcClient {
         }
         switch (event.type) {
           case "stdout":
-            for (const record of this.decoder.push(event.data)) this.dispatch(record);
+            if (!this.closed) {
+              try {
+                for (const record of this.decoder.push(event.data)) this.dispatch(record);
+              } catch (error) {
+                this.streamFailed(error);
+                // Keep draining transport events so close can confirm exit.
+              }
+            }
             break;
           case "stderr":
             this.captureStderr(event.data);
             break;
           case "exit":
-            this.decoder.finish();
+            this.exited = true;
             this.resolveExit(event.code);
+            if (!this.closed) this.decoder.finish();
             this.terminate(this.processExitError(`exited with code ${event.code}`));
             return;
         }
       }
     } catch (error) {
-      const failure = asError(error);
-      this.terminate(
-        new Error(`Worker Pi RPC stream failed: ${failure.message}`, { cause: failure }),
-      );
-      if (!this.closing) void this.process.close().catch(() => undefined);
+      this.streamFailed(error);
     }
+  }
+
+  private streamFailed(error: unknown): void {
+    const failure = asError(error);
+    this.terminate(
+      new Error(`Worker Pi RPC stream failed: ${failure.message}`, { cause: failure }),
+    );
+    // Observe the automatic cleanup rejection, but retain it in closePromise
+    // so an explicit close cannot mistake it for successful termination.
+    void this.close().catch(() => undefined);
   }
 
   private dispatch(record: RpcRecord): void {
@@ -384,13 +426,6 @@ function concatenate(left: Uint8Array, right: Uint8Array): Uint8Array {
   combined.set(left);
   combined.set(right, left.length);
   return combined;
-}
-
-async function exitsWithin(exit: Promise<number>, timeoutMs: number): Promise<boolean> {
-  return await Promise.race([
-    exit.then(() => true),
-    new Promise<false>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
-  ]);
 }
 
 function asError(error: unknown): Error {

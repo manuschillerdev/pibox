@@ -3,6 +3,7 @@ import type {
   ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
 import { syncBridgeStatus } from "./interactive-bridge.js";
+import { showNetworkOverlay } from "./network-ui.js";
 import { runWithStartupUi } from "./startup-ui.js";
 import type { WorkerCreateOptions } from "./worker-manager.js";
 import type { WorkerRegistry } from "./worker-registry.js";
@@ -23,6 +24,32 @@ export function registerCommands(
         `Worker ${worker.id} is ready and connected over RPC (${worker.worktreeRoot})`,
         "info",
       );
+    }),
+  });
+
+  pi.registerCommand("pibox-vscode", {
+    description: "Prepare key-only SSH and open a smolVM workspace in VS Code",
+    handler: command(async (args, ctx) => {
+      const explicit = singleArgument(args, "/pibox-vscode");
+      const worker = explicit ? registry.get(explicit) : registry.routed();
+      if (!worker) throw new Error("Connect a worker with /pibox first, or use /pibox-vscode <worker>");
+      const vscode = worker.vscode;
+      await vscode.preflight();
+      if (!ctx.hasUI) throw new Error("/pibox-vscode requires UI confirmation before provisioning SSH");
+      if (!await ctx.ui.confirm("Open Pibox in VS Code?", "Install OpenSSH in the guest if needed and start a dedicated key-only root SSH daemon? Pibox will publish it on host loopback, generate a private host identity, and add a managed Include to ~/.ssh/config (backing up existing contents). Existing SSH services and guest workspace permissions are unchanged. Use the default Remote - SSH config file; custom remote.SSH.configFile settings are unsupported.")) return;
+      ctx.ui.notify("Preparing guest SSH and VS Code connection (first install may take a few minutes)…", "info");
+      const alias = await vscode.open();
+      ctx.ui.notify(`Opened VS Code via ${alias}. Keep this Pibox controller running.`, "info");
+    }),
+  });
+
+  pi.registerCommand("pibox-net", {
+    description: "Discover and publish guest TCP services without restarting the worker",
+    handler: command(async (args, ctx) => {
+      const explicit = singleArgument(args, "/pibox-net");
+      const worker = explicit ? registry.get(explicit) : registry.routed();
+      if (!worker) throw new Error("Connect a worker with /pibox first, or use /pibox-net <worker>");
+      await showNetworkOverlay(pi, ctx, worker.network, worker.name);
     }),
   });
 

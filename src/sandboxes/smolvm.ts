@@ -6,6 +6,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify } from "smol-toml";
+import { SmolvmNetwork } from "./smolvm-network.js";
+import {
+  assertMachineIdentity, existingMachine, lockMachine, machineIdentity, machineLabels,
+} from "./smolvm-lifecycle.js";
 import type {
   CredentialBroker,
   PreparedCredential,
@@ -43,59 +47,76 @@ export class SmolvmProvider implements SandboxProvider {
     }
 
     assertNoCacheMountConflicts(config, mounts);
-    this.credentialBroker.install(this.credentials);
-    const directory = await mkdtemp(join(tmpdir(), "pibox-smolvm-"));
-    const smolfile = join(directory, "Smolfile");
+    const labels = machineLabels(config, mounts, this.credentials);
+    const release = await lockMachine(name);
+    let directory: string | undefined;
+    let created = false;
     try {
+      const existing = await existingMachine(name, labels);
+      this.credentialBroker.install(this.credentials);
+      if (existing) {
+        if (existing.state === "stopped") {
+          await runSmolvm(["machine", "start", "--name", name]);
+        }
+        return new SmolvmInstance(name, this.credentialBroker.secretEnvironment(),
+          existing.identity, release, existing.state === "running" ? "running" : "stopped");
+      }
+      directory = await mkdtemp(join(tmpdir(), "pibox-smolvm-"));
+      const smolfile = join(directory, "Smolfile");
       await writeFile(smolfile, stringify(config));
       await runSmolvm([
-        "machine",
-        "create",
-        "--name",
-        name,
-        "--smolfile",
-        smolfile,
-        ...mounts.flatMap((mount) => [
-          "--volume",
-          `${mount.source}:${mount.target}`,
-        ]),
+        "machine", "create", "--name", name, "--smolfile", smolfile,
+        ...Object.entries(labels).flatMap(([key, value]) => ["--label", `${key}=${value}`]),
+        ...mounts.flatMap((mount) => ["--volume", `${mount.source}:${mount.target}`]),
       ]);
+      created = true;
       await runSmolvm(["machine", "start", "--name", name]);
-      return new SmolvmInstance(
-        name,
-        this.credentialBroker.secretEnvironment(),
-      );
+      return new SmolvmInstance(name, this.credentialBroker.secretEnvironment(),
+        machineIdentity(labels), release, "new");
     } catch (error) {
-      await runSmolvm([
-        "machine",
-        "delete",
-        "--name",
-        name,
-        "--force",
-      ]).catch(() => undefined);
+      // Failed create/reopen grants no deletion rights over persisted data.
+      if (created) {
+        await runSmolvm(["machine", "delete", "--name", name, "--force"])
+          .catch(() => undefined);
+      }
       this.credentialBroker.cleanup();
-      throw new Error(`Failed to create smolVM machine ${name}: ${errorMessage(error)}`, {
+      await release();
+      throw new Error(`Failed to open or create smolVM machine ${name}: ${errorMessage(error)}`, {
         cause: error,
       });
     } finally {
-      await rm(directory, { recursive: true, force: true });
+      if (directory) await rm(directory, { recursive: true, force: true });
     }
   }
 }
 
 class SmolvmInstance implements SandboxInstance {
+  private readonly network: SmolvmNetwork;
   private stopped = false;
   private removed = false;
 
   constructor(
     private readonly name: string,
     private readonly secrets: readonly SecretEnvironment[],
-  ) {}
+    private readonly identity: string,
+    private release: (() => Promise<void>) | undefined,
+    private readonly origin: "new" | "running" | "stopped",
+  ) { this.network = SmolvmNetwork.forMachine(name); }
+
+  publishTcp(guestPort: number): Promise<number> {
+    if (this.stopped || this.removed || !this.release) return Promise.reject(new Error("smolVM worker is stopped"));
+    return this.network.publish(guestPort);
+  }
+
+  unpublishTcp(hostPort: number, guestPort: number): Promise<void> {
+    return this.network.unpublish(hostPort, guestPort);
+  }
 
   startProcess(
     command: readonly string[],
     options: ProcessOptions = {},
   ): Promise<SandboxProcess> {
+    if (this.stopped || this.removed || !this.release) throw new Error("smolVM worker is stopped");
     if (command.length === 0) throw new Error("Sandbox command must not be empty");
     const args = ["machine", "exec", "--name", this.name, "-i"];
     if (options.cwd !== undefined) args.push("--workdir", options.cwd);
@@ -114,21 +135,48 @@ class SmolvmInstance implements SandboxInstance {
 
   async stop(): Promise<void> {
     if (this.stopped || this.removed) return;
+    this.release ??= await lockMachine(this.name);
+    await assertMachineIdentity(this.name, this.identity);
     await runSmolvm(["machine", "stop", "--name", this.name]);
+    await this.release?.();
+    this.release = undefined;
+    this.stopped = true;
+  }
+
+  async rollback(): Promise<void> {
+    if (this.origin === "new") return this.remove();
+    if (this.origin === "stopped") return this.stop();
+    // Failed bootstrap on an adopted running VM must not stop its services.
+    await this.release?.();
+    this.release = undefined;
     this.stopped = true;
   }
 
   async remove(): Promise<void> {
-    if (this.removed) return;
-    await this.stop().catch(() => undefined);
-    await runSmolvm([
-      "machine",
-      "delete",
-      "--name",
-      this.name,
-      "--force",
-    ]);
+    if (this.removed) {
+      await this.release?.();
+      this.release = undefined;
+      return;
+    }
+    // A stopped handle no longer owns the VM: another controller may use it.
+    const reacquired = !this.release;
+    this.release ??= await lockMachine(this.name);
+    try {
+      await assertMachineIdentity(this.name, this.identity);
+    } catch (error) {
+      // A stale stopped handle has not touched the replacement machine.
+      if (reacquired && this.stopped) {
+        await this.release();
+        this.release = undefined;
+      }
+      throw error;
+    }
+    // A failed delete may leave a running guest: retain this lease for retry.
+    await runSmolvm(["machine", "delete", "--name", this.name, "--force"]);
     this.removed = true;
+    this.stopped = true;
+    await this.release();
+    this.release = undefined;
   }
 }
 
@@ -139,6 +187,8 @@ class SmolvmProcess implements SandboxProcess {
   private resolveExit!: (code: number) => void;
   private ended = false;
   private closed = false;
+  private closePromise: Promise<void> | undefined;
+  private processError: Error | undefined;
 
   constructor(private readonly child: ChildProcessWithoutNullStreams) {
     this.exit = new Promise<number>((resolveExit) => {
@@ -150,12 +200,14 @@ class SmolvmProcess implements SandboxProcess {
     child.stderr.on("data", (chunk: Buffer) => {
       this.push({ type: "stderr", data: new Uint8Array(chunk) });
     });
-    child.once("error", (error) => {
+    child.on("error", (error) => {
+      this.processError = error;
       this.push({
         type: "stderr",
-        data: new TextEncoder().encode(`Unable to start smolvm CLI: ${error.message}\n`),
+        data: new TextEncoder().encode(`smolvm CLI process error: ${error.message}\n`),
       });
-      this.finish(1);
+      // A spawn failure has no process; a failed kill does not prove exit.
+      if (child.pid === undefined) this.finish(1);
     });
     child.once("close", (code, signal) => {
       this.finish(code ?? (signal ? 128 : 1));
@@ -181,15 +233,21 @@ class SmolvmProcess implements SandboxProcess {
     });
   }
 
-  async close(): Promise<void> {
-    if (this.closed) return;
+  close(): Promise<void> {
+    return this.closePromise ??= this.closeProcess();
+  }
+
+  private async closeProcess(): Promise<void> {
     this.closed = true;
     this.child.stdin.end();
     if (this.ended || (await exitsWithin(this.exit, PROCESS_EXIT_TIMEOUT_MS))) return;
-    this.child.kill("SIGTERM");
-    if (await exitsWithin(this.exit, PROCESS_EXIT_TIMEOUT_MS)) return;
-    this.child.kill("SIGKILL");
-    await exitsWithin(this.exit, PROCESS_EXIT_TIMEOUT_MS);
+    for (const signal of ["SIGTERM", "SIGKILL"] as const) {
+      if (!this.child.kill(signal)) {
+        throw this.processError ?? new Error(`Unable to terminate smolvm CLI with ${signal}`);
+      }
+      if (await exitsWithin(this.exit, PROCESS_EXIT_TIMEOUT_MS)) return;
+    }
+    throw new Error("smolvm CLI exit could not be confirmed after SIGKILL");
   }
 
   private push(event: ProcessEvent): void {
@@ -293,6 +351,9 @@ class SmolvmCredentialBroker implements CredentialBroker {
 async function runSmolvm(args: readonly string[]): Promise<void> {
   const child = spawn(smolvmCommand(), args, {
     stdio: ["ignore", "ignore", "pipe"],
+    // Native defaults publish on loopback. Setting SMOLVM_PUBLISH_ADDR, even
+    // to 127.0.0.1, opts into fleet policy and blocks guest-to-host access.
+    // Preserve an explicit operator value; never silently weaken that policy.
   });
   let stderr = "";
   child.stderr.on("data", (chunk: Buffer) => {
@@ -316,12 +377,17 @@ function smolvmCommand(): string {
 }
 
 async function exitsWithin(exit: Promise<number>, timeoutMs: number): Promise<boolean> {
-  return await Promise.race([
-    exit.then(() => true),
-    new Promise<false>((resolveTimeout) =>
-      setTimeout(() => resolveTimeout(false), timeoutMs),
-    ),
-  ]);
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      exit.then(() => true),
+      new Promise<false>((resolveTimeout) => {
+        timeout = setTimeout(() => resolveTimeout(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 function errorMessage(error: unknown): string {

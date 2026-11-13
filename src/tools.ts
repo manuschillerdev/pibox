@@ -58,6 +58,7 @@ export function registerTools(pi: ExtensionAPI, registry: WorkerRegistry): void 
         accepted: result.accepted,
         state: result.state,
         lastAssistantText: truncateUtf8(result.lastAssistantText, 40 * 1024),
+        lastAssistantThinking: truncateUtf8(result.lastAssistantThinking, 40 * 1024),
         sessionStats: result.sessionStats,
       });
     },

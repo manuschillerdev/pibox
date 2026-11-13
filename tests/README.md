@@ -8,6 +8,14 @@ npm test
 
 They cover model-selection ordering, handled prompts and cancellation/draining, current-turn assistant results/errors, safe model-catalog serialization, enforced deadlines, late provisioning cleanup and stalled Git identity lookups.
 
+## Interactive thinking
+
+```sh
+node --test tests/interactive-thinking.test.mjs tests/interactive-bridge.test.mjs tests/worker-behavior.test.mjs
+```
+
+The JSONL fixture exercises the real `PiRpcClient`, `Worker`, interactive bridge, and Pi custom-entry renderer without a VM, credentials, or provider calls. It verifies host thinking-level synchronization, ordering after model selection, streaming and final rendering across tool turns, failed-retry exclusion, and explicit sync failures. To exercise another installed Pi version's entry renderer and theme, set `PIBOX_TEST_PI_ROOT` to its `@earendil-works/pi-coding-agent` package directory.
+
 ## Cache deduplication integration tests
 
 ```sh
@@ -42,3 +50,24 @@ These tests establish package-download and installed-tool reuse, **not** shared 
 
 - Forcing `statVirtualization("relaxed")` on cache mounts caused mise's Node extraction to fail with `ELOOP` while restoring `bin/npm` symlink timestamps. CLI-only tests missed this; adapter-level tests exercise it. Keep the default stat policy with mirrored host permissions.
 - pnpm 10 ignores `PNPM_CONFIG_STORE_DIR`, silently creating a worktree-local store. The preset uses `npm_config_store_dir`, and the integration suite checks the actual resolved store and offline reuse rather than only the variable's spelling.
+
+## smolVM lifecycle
+
+`tests/smolvm-lifecycle.test.mjs` runs the actual adapter, registry, and failed worker bootstrap against an isolated persistent CLI fixture and SDK inspection mocks. It covers reopening after stop, running adoption without restart, exclusive controller ownership, configuration/security mismatch, legacy and in-progress refusal, non-destructive create conflicts, startup rollback, explicit removal, and keep-running scope. Registry tests cover shutdown during pending creation and retrying a failed stop.
+
+An opt-in credential-free check uses a uniquely named disposable VM:
+
+```sh
+node tests/smolvm-lifecycle-live.mjs
+```
+
+It verifies graceful registry shutdown leaves a stopped machine, a new adapter reopens it with its rootfs sentinel intact, running adoption preserves its boot ID, and a concurrent controller is refused. It does not start Pi RPC or simulate terminal signals. Only the test-owned VM is removed.
+
+
+## Shared HTTP network
+
+`node tests/smolvm-http-live.mjs` creates one uniquely named disposable VM. It verifies the same `http://<service>.<worker>.pibox.test` URL from host and guest, WebSocket upgrade/data, HTTP 502 readiness, idle connection cleanup, and unchanged VM boot ID. Host requests use an explicit test lookup override; they **do not** prove host OS resolution is configured. Guest curl uses normal resolution. Port 80 must be free; `PIBOX_TEST_HTTP_PORT=0` explicitly selects an ephemeral test port without changing the production default. No existing VM/container, host hosts/resolver/trust, or application configuration is changed.
+
+`network-hosts.test.mjs` tests ownership, unmanaged mapping reuse, conflicts, authorization failures and guest cleanup using temporary files only. It never executes privileged host mutations.
+
+Unit tests cover exact HTTP routes, HTTP/WebSocket forwarding, rejection of remote clients, and scoped hostname mappings. Cleanup regressions verify that guest or route cleanup failures do not prevent native revocation, retries skip already removed native mappings, and pending guest-cleanup names are not restored by other publications. Lifecycle tests verify Pibox no longer injects `SMOLVM_PUBLISH_ADDR` (whose presence selects smolVM fleet policy), while preserving explicit operator values.
