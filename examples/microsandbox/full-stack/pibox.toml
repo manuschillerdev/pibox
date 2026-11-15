@@ -15,7 +15,7 @@ scope = "user"
 scope = "user"
 
 [sandbox]
-image = "ghcr.io/manuschillerdev/pibox-base:bookworm"
+imageWith = { oci = "ghcr.io/manuschillerdev/pibox-base:bookworm", upperSize = 32768 }
 ephemeral = true
 replace = true
 cpus = 4

@@ -93,7 +93,7 @@ Pibox uses its Debian base image, which includes pinned Node.js, Pi, and agent-b
 
 Run `/pibox-vscode` for the connected worker, or `/pibox-vscode <worker>`, to prepare SSH and open its configured guest workdir in VS Code. Requires a macOS/Linux host with `code`, OpenSSH, Microsoft's **Remote - SSH** extension in the default VS Code profile, and a **smolVM** worker using the Pibox Debian image with virtio-net networking. Microsandbox publication is not supported. The separate [Pibox SSH extension for VS Code](extensions/vscode/README.md) remains available for manually configured endpoints and saved profiles; it is not required by the slash command.
 
-After confirmation, the command installs `openssh-server` if missing (requires guest apt/network access), starts an isolated key-only **root** SSH daemon on a free guest port, publishes a host-loopback TCP endpoint, and opens VS Code. Root matches Pibox's existing worker identity without changing workspace ownership or permissions; the editor can access everything guest root can, including guest credentials and writable host mounts. Existing SSH daemons, `/etc/ssh` settings, and user authorized keys are not replaced. Automatic installation uses a temporary deny-service-start policy, or preserves the image's existing deny-all policy; other existing `policy-rc.d` policies require you to install OpenSSH yourself first.
+The Pibox base image already includes OpenSSH and the VS Code Remote bootstrap/runtime prerequisites, so after confirmation the command starts an isolated key-only **root** SSH daemon on a free guest port, publishes a host-loopback TCP endpoint, and opens VS Code. Root matches Pibox's existing worker identity without changing workspace ownership or permissions; the editor can access everything guest root can, including guest credentials and writable host mounts. Existing SSH daemons, `/etc/ssh` settings, and user authorized keys are not replaced.
 
 Each live worker gets an unpassphrased Ed25519 identity stored only on the host and a host-key pin obtained through trusted provider exec, not network scanning. Password login and agent forwarding are disabled; host-key verification stays strict. Host files live under `~/.ssh/pibox-vscode/<instance>/` with private permissions. A one-time managed `Include` is prepended to `~/.ssh/config`, preserving its contents and saving `config.pibox-backup-*`; unsafe permissions, symlinks, locks, and conflicting effective SSH settings fail closed. Do not edit that file concurrently with setup. Use Remote - SSH's **default SSH config file**: custom `remote.SSH.configFile`/SSH binary overrides and non-default VS Code profiles are unsupported.
 
@@ -137,12 +137,12 @@ Interactive prompts use the host's selected model and thinking level. Provider-e
 
 - **Enter:** name and publish; **Tab:** HTTP or raw TCP.
 - **U / Ctrl+U:** unpublish from list/form. **R:** refresh. **C:** copy endpoint. **O:** open browser. **Esc:** close/back.
-- HTTP publication asks permission for exact guest hostname mappings. If the host needs a mapping, the same overlay shows the bounded `/etc/hosts` command and requests separate authorization. Cancellation publishes nothing new.
+- HTTP publication immediately creates an exact guest hostname mapping. `.localhost` resolves to host loopback without host setup or elevation.
 
 ### One canonical HTTP URL
 
 ```text
-http://<service>.<worker>.pibox.test
+http://<service>.<worker>.localhost
 
 Host browser → loopback:80 → embedded Portless → native smolVM port → service
 Guest → native smolVM host gateway:80 ───────────┘
@@ -152,13 +152,11 @@ Portless handles HTTP/WebSockets and exact in-memory routes. No TLS, certificate
 
 The proxy binds port **80** on both wildcard address families without elevation where supported (macOS); Portless rejects non-loopback peers before HTTP parsing and on requests/upgrades. There is no high-port fallback or automatic sharing with another controller. Linux requires low-port permissions configured separately. Pibox never elevates Pi or changes firewall rules, sysctl, or operator policy. Existing loopback listeners are checked before binding; an unrelated process binding a specific address later is an external race.
 
-Host setup appends only the requested `.pibox.test` name to `/etc/hosts` as loopback. Correct unmanaged mappings are reused; conflicts fail closed. All unrelated entries, including Portless's shared block, remain untouched. Portless's native hosts writer replaces its entire shared block, so Pibox uses a narrow append-only helper instead. On macOS only that displayed helper requests administrator authorization; Linux uses `pkexec`. **Host entries remain after unpublish/shutdown** as durable name setup, but do not keep any route or forwarding active. Removing these optional entries later is a separate explicit administrator action.
-
-Guest setup maps exact names to the native host gateway, preserving unrelated entries and other workers. Managed guest entries are removed on unpublish. Docker discovery supplies service names only; containers do not inherit the VM's `/etc/hosts`. Arbitrary container-client access is not configured. Host/guest HTTP status is displayed separately; HTTP 502 means upstream unavailable, while HTTP 401/403 remain authentication responses.
+The host resolver sends `.localhost` names to loopback without modifying host files or requiring elevation. Guest setup maps exact names to the native host gateway, preserving unrelated entries and other workers. Managed guest entries are removed on unpublish. Docker discovery supplies service names only; containers do not inherit the VM's `/etc/hosts`. Arbitrary container-client access is not configured. Host/guest HTTP status is displayed separately; HTTP 502 means upstream unavailable, while HTTP 401/403 remain authentication responses.
 
 **Existing workers:** earlier Pibox versions injected `SMOLVM_PUBLISH_ADDR=127.0.0.1`, which smolVM interprets as fleet mode and blocks host gateway access. New workers no longer receive that injected setting. Explicit operator values remain untouched. An old worker may need an explicitly coordinated stop/start under the intended policy; Pibox never restarts it automatically. Preserve guest disks and Docker volumes—do not delete/recreate a VM containing data just to change networking.
 
-**Application configuration:** use the displayed HTTP URL for public origins/OAuth callbacks/allowed hosts, e.g. Coder's `CODER_ACCESS_URL`. Pibox never guesses or rewrites app settings. Old publications do not silently migrate: unpublish/re-publish and update the app explicitly. `.localhost` cannot provide the same meaning inside a VM, which is why shared URLs use `.pibox.test`.
+**Application configuration:** use the displayed HTTP URL for public origins/OAuth callbacks/allowed hosts, e.g. Coder's `CODER_ACCESS_URL`. Pibox never guesses or rewrites app settings. Old publications do not silently migrate: unpublish/re-publish and update the app explicitly. Pibox's exact guest `/etc/hosts` mappings make the same `.localhost` URL reach the native host gateway from the VM.
 
 ### Publication and cleanup
 
@@ -183,7 +181,7 @@ Start a guest server, then publish from the overlay:
 /pibox-net
 ```
 
-Publish `3456` as `hello` using HTTP, review/approve the guest and any required host mapping, then open the displayed URL. Curl **the same URL** from the guest. Unpublish and verify it stops serving. Publication never restarts the VM.
+Publish `3456` as `hello` using HTTP, then open the displayed URL. Curl **the same URL** from the guest. Unpublish and verify it stops serving. Publication never restarts the VM.
 
 Credential-free tests create/delete only uniquely named disposable VMs:
 
@@ -192,7 +190,7 @@ node tests/smolvm-network-live.mjs # native mapping lifecycle
 node tests/smolvm-http-live.mjs    # same HTTP URL from host and guest; WebSocket; cleanup
 ```
 
-The HTTP test overrides only the host lookup for its requests; it does **not** prove host OS resolution is configured. Guest checks use normal resolution. It needs internet access for Alpine packages and free host port 80. If another controller owns port 80, `PIBOX_TEST_HTTP_PORT=0 node tests/smolvm-http-live.mjs` explicitly exercises an ephemeral test port instead; production never falls back. It does not modify existing VMs, host `/etc/hosts`, trust, resolver configuration, or Coder.
+The HTTP test uses normal host and guest `.localhost` resolution. It needs internet access for Alpine packages and free host port 80. If another controller owns port 80, `PIBOX_TEST_HTTP_PORT=0 node tests/smolvm-http-live.mjs` explicitly exercises an ephemeral test port instead; production never falls back. It does not modify existing VMs, host `/etc/hosts`, trust, resolver configuration, or Coder.
 
 ## Authentication
 

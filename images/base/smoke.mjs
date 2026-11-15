@@ -23,6 +23,10 @@ try {
   const guide = await exec("agent-browser", ["skills", "get", "core"], { timeout: 10_000 });
   assert.ok(guide.stdout.includes("snapshot"), "CLI must serve its bundled workflow");
   assert.match(await readFile("/root/.agents/skills/agent-browser/SKILL.md", "utf8"), /name: agent-browser/);
+  await exec("sshd", ["-t"]);
+  await exec("ssh", ["-V"]);
+  await exec("ssh-keygen", ["-l", "-f", "/etc/ssh/ssh_host_ed25519_key.pub"]);
+  for (const command of ["bash", "curl", "tar", "gzip", "ps"]) await exec(command, ["--version"]);
   await checkPiSkill();
 
   server.listen(0, "127.0.0.1");

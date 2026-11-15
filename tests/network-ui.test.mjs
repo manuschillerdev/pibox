@@ -26,7 +26,7 @@ test('compact bordered service table moves selected URL below rows, with prefill
     assert.match(screen.join('\n'),/shop \/ web/);
     f.ui.handleInput('\r');
     assert.equal(f.ui.input.getValue(),'shop-web');
-    assert.match(f.ui.render(90).join('\n'),/http:\/\/shop-web\.pibox-[a-f0-9]{8}\.pibox\.test/);
+    assert.match(f.ui.render(90).join('\n'),/http:\/\/shop-web\.pibox-[a-f0-9]{8}\.localhost/);
     f.ui.handleInput('\x1b');
     f.network.published.set('127.0.0.1:8080',{listener:row,name:'custom',mode:'http',hostPort:12345,endpoint:'http://custom.pibox-12345678.localhost'});
     screen=f.ui.render(90);
@@ -125,21 +125,19 @@ test('short form keeps name, mode and actions visible after invalid save and mod
   }finally{f.dispose();}
 });
 
-test('HTTP publish requires explicit hostname setup confirmation',async()=>{
- const f=await fixture([listener()]);let publishes=0,confirms=0;
+test('HTTP publish immediately creates the selected route',async()=>{
+ const f=await fixture([listener()]);let publishes=0;
  f.network.publish=async()=>{publishes++;};
  try {
   f.ui.render(90);f.ui.handleInput('\r');f.ui.handleInput('\r');await tick();
-  assert.equal(publishes,0);assert.match(f.ui.render(90).join('\n'),/cancelled/);
-  f.ui.confirmHttp=async()=>{confirms++;return true;};f.ui.handleInput('\r');await tick();
-  assert.equal(confirms,1);assert.equal(publishes,1);
+  assert.equal(publishes,1);
  }finally{f.dispose();}
 });
 
 test('overlay does not collapse a HTTP 502 into a healthy readiness label',async()=>{
  const row=listener(),f=await fixture([row],26);
  try {
-  f.network.published.set('127.0.0.1:8080',{listener:row,name:'web',mode:'http',hostPort:12345,endpoint:'http://web.pibox-test.pibox.test',readiness:{host:'HTTP reachable (OS resolution) · HTTP 502 · upstream unavailable',guest:'HTTP reachable (curl) · HTTP 401',docker:'Not connected'}});
+  f.network.published.set('127.0.0.1:8080',{listener:row,name:'web',mode:'http',hostPort:12345,endpoint:'http://web.pibox-test.localhost',readiness:{host:'HTTP reachable (OS resolution) · HTTP 502 · upstream unavailable',guest:'HTTP reachable (curl) · HTTP 401',docker:'Not connected'}});
   const screen=f.ui.render(90).join('\n');
   assert.match(screen,/Host: HTTP 502 · upstream unavailable/);
   assert.match(screen,/Guest: HTTP 401/);

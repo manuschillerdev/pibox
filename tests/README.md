@@ -66,8 +66,8 @@ It verifies graceful registry shutdown leaves a stopped machine, a new adapter r
 
 ## Shared HTTP network
 
-`node tests/smolvm-http-live.mjs` creates one uniquely named disposable VM. It verifies the same `http://<service>.<worker>.pibox.test` URL from host and guest, WebSocket upgrade/data, HTTP 502 readiness, idle connection cleanup, and unchanged VM boot ID. Host requests use an explicit test lookup override; they **do not** prove host OS resolution is configured. Guest curl uses normal resolution. Port 80 must be free; `PIBOX_TEST_HTTP_PORT=0` explicitly selects an ephemeral test port without changing the production default. No existing VM/container, host hosts/resolver/trust, or application configuration is changed.
+`node tests/smolvm-http-live.mjs` creates one uniquely named disposable VM. It verifies the same `http://<service>.<worker>.localhost` URL from host and guest using normal resolution, WebSocket upgrade/data, HTTP 502 readiness, idle connection cleanup, and unchanged VM boot ID. Port 80 must be free; `PIBOX_TEST_HTTP_PORT=0` explicitly selects an ephemeral test port without changing the production default. No existing VM/container, host hosts/resolver/trust, or application configuration is changed.
 
-`network-hosts.test.mjs` tests ownership, unmanaged mapping reuse, conflicts, authorization failures and guest cleanup using temporary files only. It never executes privileged host mutations.
+`network-hosts.test.mjs` tests exact guest `.localhost` mappings, ownership, conflicts, and cleanup using temporary files only. It never executes privileged host mutations.
 
 Unit tests cover exact HTTP routes, HTTP/WebSocket forwarding, rejection of remote clients, and scoped hostname mappings. Cleanup regressions verify that guest or route cleanup failures do not prevent native revocation, retries skip already removed native mappings, and pending guest-cleanup names are not restored by other publications. Lifecycle tests verify Pibox no longer injects `SMOLVM_PUBLISH_ADDR` (whose presence selects smolVM fleet policy), while preserving explicit operator values.

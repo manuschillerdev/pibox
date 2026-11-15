@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createConnection, type Server, type Socket } from "node:net";
 import { createProxyServer, formatUrl, type RouteInfo } from "portless";
 import { LoopbackPair } from "./network-loopback.js";
-export const NETWORK_DOMAIN = "pibox.test";
+export const NETWORK_DOMAIN = "localhost";
 
 export function networkNamespace(worker: string, worktree: string): string {
   return `pibox-${createHash("sha256").update(worktree + "\0" + worker).digest("hex").slice(0, 8)}`;
@@ -12,10 +12,15 @@ export function validateServiceName(name: string): void {
     throw new Error("Name must be 1–40 lowercase letters, digits or interior hyphens");
   }
 }
+export function validateNetworkHostname(name: string): void {
+  if (name !== name.trim() || name.length > 253 || !/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?\.pibox-[a-f0-9]{8}\.localhost$/.test(name)) {
+    throw new Error("Invalid Pibox hostname");
+  }
+}
 
 /** Private in-memory routes, never shared Portless CLI state. */
 export class EmbeddedPortless {
-  private readonly routes = new Map<string, { route: RouteInfo; target: number; bridge: LoopbackPair }>();
+  private readonly routes = new Map<string, { route: RouteInfo; target: number; bridge: LoopbackPair; bridgeClosed: boolean }>();
   private server: BrowserProxy | undefined;
   private tail: Promise<unknown> = Promise.resolve();
 
@@ -33,7 +38,7 @@ export class EmbeddedPortless {
       const bridge = await LoopbackPair.forward(port);
       try {
         if (!this.server) await this.start();
-        this.routes.set(hostname, { route: { hostname, port: bridge.port }, target: port, bridge });
+        this.routes.set(hostname, { route: { hostname, port: bridge.port }, target: port, bridge, bridgeClosed: false });
         return formatUrl(hostname, this.server!.port, false);
       } catch (error) { await bridge.close(); throw error; }
     });
@@ -44,13 +49,15 @@ export class EmbeddedPortless {
       const entry = this.routes.get(hostname);
       if (!entry) return;
       if (entry.target !== port) throw new Error("Refusing to remove another publication");
-      this.routes.delete(hostname);
-      await entry.bridge.close();
-      if (!this.routes.size) {
-        const server = this.server;
-        this.server = undefined;
-        await server?.close();
+      if (!entry.bridgeClosed) {
+        await entry.bridge.close();
+        entry.bridgeClosed = true;
       }
+      if (this.routes.size === 1) {
+        await this.server?.close();
+        this.server = undefined;
+      }
+      this.routes.delete(hostname);
     });
   }
 

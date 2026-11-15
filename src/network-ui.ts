@@ -3,7 +3,6 @@ import { Input, SelectList, matchesKey, truncateToWidth, visibleWidth, wrapTextW
 import type { WorkerNetwork } from "./network.js";
 import { listenerKey, type GuestListener } from "./network-discovery.js";
 import { validateServiceName } from "./network-portless.js";
-import { hostMappingNeeded, hostSetupCommand, installHostMapping } from "./network-hosts.js";
 import { cleanNetworkText as clean, defaultServiceNames, serviceLabel } from "./network-services.js";
 
 export async function showNetworkOverlay(pi: ExtensionAPI, ctx: ExtensionCommandContext, network: WorkerNetwork, name: string): Promise<void> {
@@ -21,16 +20,6 @@ export async function showNetworkOverlay(pi: ExtensionAPI, ctx: ExtensionCommand
       }
     },
     () => Math.max(1, tui.terminal.rows - 2),
-    async (hostname) => {
-      const needed = await hostMappingNeeded(hostname);
-      const details = `Publish http://${hostname} and add an exact guest hostname → native gateway mapping? No Docker client changes. Unpublish revokes routing and guest mappings.`;
-      if (!await ctx.ui.confirm("Publish HTTP service?", details)) return false;
-      if (needed) {
-        if (!await ctx.ui.confirm("Authorize host hostname setup?", `Append a loopback mapping to /etc/hosts. This harmless entry remains after unpublish/shutdown; no route remains. Only this helper is elevated, never Pi. Command:\n${hostSetupCommand(hostname)}`)) return false;
-        await installHostMapping(hostname, (command, args) => pi.exec(command, args));
-      }
-      return true;
-    },
   ), { overlay: true, overlayOptions: { width: 90, margin: 1, anchor: "center" } });
 }
 
@@ -58,7 +47,6 @@ export class NetworkOverlay implements Focusable {
     private readonly done: () => void,
     private readonly external: (value: string, open: boolean) => Promise<void>,
     private readonly availableHeight: () => number = () => 24,
-    private readonly confirmHttp: (hostname: string) => Promise<boolean> = () => Promise.resolve(false),
   ) {
     this.list = this.makeList();
     this.input.onSubmit = () => { void this.save(); };
@@ -125,7 +113,6 @@ export class NetworkOverlay implements Focusable {
       if (current && current.name === name && current.mode === this.mode && !current.error) {
         this.selected = undefined;
       } else {
-        if (this.mode === "http" && !await this.confirmHttp(`${name}.${this.network.portless.namespace}.pibox.test`)) { this.message = "Publication cancelled"; return; }
         // Changes replace only Pibox-owned publications.
         if (current) await this.network.unpublish(listenerKey(listener));
         await this.network.publish(listener, name, this.mode);
@@ -191,7 +178,7 @@ export class NetworkOverlay implements Focusable {
       lines.push(this.theme.bold(serviceLabel(row)), this.theme.fg("dim", `${clean(row.address)}:${row.port}${row.docker ? ` → container :${row.docker.containerPort}` : ""}`));
       if (height >= 17) {
         const value = clean(this.input.getValue());
-        lines.push(this.theme.fg("muted", this.mode === "http" ? `http://${value}.${this.network.portless.namespace}.pibox.test` : "A host-loopback TCP endpoint"));
+        lines.push(this.theme.fg("muted", this.mode === "http" ? `http://${value}.${this.network.portless.namespace}.localhost` : "A host-loopback TCP endpoint"));
       }
       footer = short ? ["Enter Save · Ctrl+U", "Esc Back"] : ["Enter Save · Ctrl+U Unpublish · Esc Back"];
     } else {

@@ -36,25 +36,29 @@ export class SmolvmNetwork {
       }
       const machine = await this.open();
       if (await machine.state() !== "running") throw new Error("Start the smolVM worker before publishing; Pibox never restarts it");
-      const before = await machine.ports();
-      let host: number;
-      do { host = await freeHostPort(); } while (this.owned.has(host) || before.some((port) => port.host === host && port.protocol === "tcp"));
-      // The SDK may commit setPorts and then fail while rereading the result.
-      // Record the exact attempted endpoint before any mutation can take place.
-      this.owned.set(host, guestPort);
-      try {
-        const mapping = await machine.publish({ host, guest: guestPort, protocol: "tcp" });
-        if (mapping.host !== host || mapping.guest !== guestPort || mapping.protocol !== "tcp") {
-          throw new Error("smolVM returned a different mapping than the requested endpoint");
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const before = await machine.ports();
+        let host: number;
+        do { host = await freeHostPort(); } while (this.owned.has(host) || before.some((port) => port.host === host && port.protocol === "tcp"));
+        // The SDK may commit setPorts and then fail while rereading the result.
+        // Record the exact attempted endpoint before any mutation can take place.
+        this.owned.set(host, guestPort);
+        try {
+          const mapping = await machine.publish({ host, guest: guestPort, protocol: "tcp" });
+          if (mapping.host !== host || mapping.guest !== guestPort || mapping.protocol !== "tcp") {
+            throw new Error("smolVM returned a different mapping than the requested endpoint");
+          }
+          return host;
+        } catch (error) {
+          try { await this.removeOwned(host, guestPort); }
+          catch (cleanup) {
+            throw new PendingTcpPublicationError(host, guestPort, new AggregateError([error, cleanup], "Native publication and cleanup failed"));
+          }
+          if (attempt < 2 && isPortCollision(error)) continue;
+          throw new Error(`Native smolVM publishing failed: ${error instanceof Error ? error.message : String(error)}. Check smolvm 1.34.1+ and net_backend = "virtio-net"; host-port collisions can be retried. No restart was requested.`, { cause: error });
         }
-      } catch (error) {
-        try { await this.removeOwned(host, guestPort); }
-        catch (cleanup) {
-          throw new PendingTcpPublicationError(host, guestPort, new AggregateError([error, cleanup], "Native publication and cleanup failed"));
-        }
-        throw new Error(`Native smolVM publishing failed: ${error instanceof Error ? error.message : String(error)}. Use smolvm 1.34.1 or newer and a worker created with net_backend = "virtio-net"; no restart was requested.`, { cause: error });
       }
-      return host;
+      throw new Error("Unable to allocate a native host port");
     });
   }
 
@@ -77,6 +81,11 @@ export class SmolvmNetwork {
     this.tail = pending.catch(() => undefined);
     return pending;
   }
+}
+
+function isPortCollision(error: unknown): boolean {
+  return (typeof error === "object" && error !== null && "code" in error && error.code === "EADDRINUSE") ||
+    (error instanceof Error && /address already in use|port already in use|EADDRINUSE/i.test(error.message));
 }
 
 async function freeHostPort(): Promise<number> {

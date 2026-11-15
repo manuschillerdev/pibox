@@ -28,8 +28,7 @@ try {
  const url=new URL(service.endpoint);assert.equal(url.protocol,'http:');if(testPort===80)assert.equal(url.port,'');
  const actualPort=Number(url.port||80);
  console.log(`Canonical test URL: ${url} (explicit test port ${actualPort}; production port 80)`);
- const lookup=(_host,_options,done)=>done(null,[{address:'127.0.0.1',family:4}]);
- const hostGet=(options={})=>new Promise((resolve,reject)=>{const req=request(url,{lookup,agent:false,...options},res=>{let body='';res.on('data',d=>body+=d);res.on('end',()=>resolve(body));});req.on('error',reject);req.end();});
+ const hostGet=(options={})=>new Promise((resolve,reject)=>{const req=request(url,{agent:false,...options},res=>{let body='';res.on('data',d=>body+=d);res.on('end',()=>resolve(body));});req.on('error',reject);req.end();});
  assert.equal(await hostGet(),'canonical-http-ok');
  assert.equal(await run(['curl','--noproxy','*','--fail','--silent','--show-error',service.endpoint]),'canonical-http-ok');
  assert.match(service.readiness.guest,/HTTP reachable/);
@@ -39,9 +38,9 @@ try {
  const closed=once(socket,'close');socket.resume();
  for(const host of ['127.0.0.1','::1']){const peer=connect(actualPort,host);peer.on('error',()=>{});await once(peer,'connect');peer.write('GET / HTTP/1.1\r\nHost: ');idle.push(peer);}
  await network.unpublish(`${listener.host}:${listener.port}`);await closed;
- await assert.rejects(hostGet({lookup:(_host,_options,done)=>done(null,[{address:'127.0.0.1',family:4}])}));
+ await assert.rejects(hostGet());
  assert.equal(await run(['sh','-c',`grep -c 'pibox-net:${network.portless.namespace}' /etc/hosts || true`]),'0');
  assert.match(await run(['cat','/etc/hosts']),/192.0.2.1 unmanaged.example # keep-this/);
  assert.equal(await run(['cat','/proc/sys/kernel/random/boot_id']),boot);
- console.log('PASS: same HTTP hostname from host (explicit test lookup only) and guest (normal resolution); WebSocket; HTTP 502 readiness; idle teardown; no VM restart. Host OS setup deliberately not installed.');
+ console.log('PASS: same HTTP .localhost hostname from host and guest; WebSocket; HTTP 502 readiness; idle teardown; no VM restart. Host OS setup was not required.');
 }finally{for(const peer of idle)peer.destroy();try{await network?.close();}finally{await sandbox?.remove();}}

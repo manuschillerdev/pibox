@@ -19,6 +19,17 @@ async function fixture() {
  host=new VscodeHost(id,run,home);
  return {host,home,calls,async close(){await rm(home,{recursive:true,force:true});}};
 }
+test('reports VS Code CLI exit details',async()=>{
+ const home=await mkdtemp(join(tmpdir(),'pibox-vscode-cli-error-'));
+ const run=async(command,args)=>{
+  if(command==='code'&&args[0]==='--version')return '1.99.0\n';
+  if(command==='code'&&args[0]==='--list-extensions')throw Object.assign(new Error('Command failed'),{code:9,stderr:'profile unavailable'});
+  throw new Error(`unexpected command: ${command} ${args.join(' ')}`);
+ };
+ try {await assert.rejects(new VscodeHost(id,run,home).preflight(),/exit 9; profile unavailable/);}
+ finally {await rm(home,{recursive:true,force:true});}
+});
+
 test('managed include preserves original bytes, backs up once, keeps private keys and pins securely',async()=>{
  const f=await fixture();try{
   await mkdir(join(f.home,'.ssh'),{mode:0o700});

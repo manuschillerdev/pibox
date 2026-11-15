@@ -51,6 +51,9 @@ export class Worker {
   readonly relayedProviders: string[];
   readonly skippedProviders: StartedWorker["skippedProviders"];
   private closed = false;
+  private shutdownPromise: Promise<void> | undefined;
+  private removalPromise: Promise<void> | undefined;
+  private rpcClosureConfirmed = false;
   private workerNetwork: WorkerNetwork | undefined;
   private workerVscode: WorkerVscode | undefined;
 
@@ -129,8 +132,11 @@ export class Worker {
     // A cancellation can arrive while prompt preflight is still awaiting auth.
     void settled.catch(() => undefined);
     if (signal?.aborted) onAbort();
+    let dispatched = false;
+    let settledRun = false;
     try {
       if (signal?.aborted) throw new Error("Worker prompt was aborted");
+      dispatched = true;
       const accepted = await this.rpc.prompt(message, images);
       if (accepted?.disposition === "handled") {
         waitController.abort();
@@ -138,11 +144,18 @@ export class Worker {
       } else {
         await settled;
       }
+      settledRun = true;
       if (signal?.aborted) throw new Error("Worker prompt was aborted");
     } catch (error) {
       waitController.abort();
       await settled.catch(() => undefined);
-      if (abortRequest) await abortRequest;
+      try {
+        if (abortRequest) await abortRequest;
+        else if (dispatched && !settledRun) await this.abortAndDrain();
+      } catch (drainError) {
+        this.modelOperationError = asError(drainError);
+        throw new Error(`Worker ${this.id} prompt outcome is unknown; stop the worker before another prompt: ${asError(drainError).message}`, { cause: error });
+      }
       throw error;
     } finally {
       signal?.removeEventListener("abort", onAbort);
@@ -223,80 +236,52 @@ export class Worker {
     return this.rpc.onEvent(listener);
   }
 
-  async shutdown(): Promise<void> {
-    if (this.closed) {
-      const retryErrors: Error[] = [];
-      await cleanup(retryErrors, async () => { await this.workerVscode?.close(); });
-      await cleanup(retryErrors, async () => { await this.workerNetwork?.close(); });
-      await cleanup(retryErrors, () =>
-        withDeadline(this.sandbox.stop(), SANDBOX_STOP_TIMEOUT_MS, `Worker ${this.id} sandbox stop`),
-      );
-      await cleanup(retryErrors, async () => { await this.started.authRelay.cleanup(); });
-      if (retryErrors.length) throw new Error(retryErrors.map((error) => error.message).join("; "));
-      return;
-    }
+  shutdown(): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+    const firstAttempt = !this.closed;
     this.closed = true;
+    const operation = this.performShutdown(firstAttempt);
+    this.shutdownPromise = operation;
+    void operation.catch(() => { if (this.shutdownPromise === operation) this.shutdownPromise = undefined; });
+    return operation;
+  }
+
+  private async performShutdown(firstAttempt: boolean): Promise<void> {
     const cleanupErrors: Error[] = [];
     await cleanup(cleanupErrors, async () => { await this.workerVscode?.close(); });
     await cleanup(cleanupErrors, async () => { await this.workerNetwork?.close(); });
-
-    try {
-      const state = await withDeadline(
-        this.rpc.getState(),
-        RPC_SHUTDOWN_REQUEST_TIMEOUT_MS,
-        `Worker ${this.id} RPC state check`,
-      );
-      if (state.isStreaming) {
-        await withDeadline(
-          this.rpc.abort(),
-          RPC_SHUTDOWN_REQUEST_TIMEOUT_MS,
-          `Worker ${this.id} RPC abort`,
-        );
-      }
-    } catch (error) {
-      cleanupErrors.push(asError(error));
+    if (firstAttempt) {
+      try {
+        const state = await withDeadline(this.rpc.getState(), RPC_SHUTDOWN_REQUEST_TIMEOUT_MS, `Worker ${this.id} RPC state check`);
+        if (state.isStreaming) {
+          await withDeadline(this.rpc.abort(), RPC_SHUTDOWN_REQUEST_TIMEOUT_MS, `Worker ${this.id} RPC abort`);
+        }
+      } catch (error) { cleanupErrors.push(asError(error)); }
     }
-
+    if (!this.rpcClosureConfirmed) {
+      await cleanup(cleanupErrors, async () => {
+        await withDeadline(this.rpc.close(), RPC_CLOSE_TIMEOUT_MS, `Worker ${this.id} RPC close`);
+        this.rpcClosureConfirmed = true;
+      });
+    }
     await cleanup(cleanupErrors, () =>
-      withDeadline(this.rpc.close(), RPC_CLOSE_TIMEOUT_MS, `Worker ${this.id} RPC close`),
-    );
-    await cleanup(cleanupErrors, () =>
-      withDeadline(
-        this.sandbox.stop(),
-        SANDBOX_STOP_TIMEOUT_MS,
-        `Worker ${this.id} sandbox stop`,
-      ),
+      withDeadline(this.sandbox.stop(), SANDBOX_STOP_TIMEOUT_MS, `Worker ${this.id} sandbox stop`),
     );
     await cleanup(cleanupErrors, async () => { await this.started.authRelay.cleanup(); });
-
-    if (cleanupErrors.length > 0) {
-      throw new Error(
-        `Worker ${this.id} cleanup failed: ${cleanupErrors
-          .map((error) => error.message)
-          .join("; ")}`,
-      );
+    if (cleanupErrors.length) {
+      throw new Error(`Worker ${this.id} cleanup failed: ${cleanupErrors.map((error) => error.message).join("; ")}`);
     }
   }
 
-  async shutdownAndRemove(): Promise<void> {
-    let primary: Error | undefined;
-    try {
+  shutdownAndRemove(): Promise<void> {
+    return this.removalPromise ??= (async () => {
+      // Never force-delete a sandbox while RPC or VM termination is uncertain.
       await this.shutdown();
-    } catch (error) {
-      primary = asError(error);
-    }
-    try {
       await this.sandbox.remove();
-    } catch (error) {
-      const removal = asError(error);
-      if (primary) {
-        throw new Error(`${primary.message}; sandbox removal failed: ${removal.message}`, {
-          cause: primary,
-        });
-      }
-      throw removal;
-    }
-    if (primary) throw primary;
+    })().catch((error: unknown) => {
+      this.removalPromise = undefined;
+      throw error;
+    });
   }
 
   private async abortAndDrain(): Promise<void> {

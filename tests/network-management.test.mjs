@@ -68,7 +68,7 @@ test('overlay is read-only until save and sanitizes metadata in list and form',a
 
 test('HTTP guest setup failure removes proxy/native state, failed cleanup remains retryable',async()=>{
  const {network,sandbox,ports}=manager();let removes=0,syncs=0;
- network.portless.add=async()=>({hostname:'web.pibox-test.pibox.test',url:'http://web.pibox-test.pibox.test'});
+ network.portless.add=async()=>({hostname:'web.pibox-test.localhost',url:'http://web.pibox-test.localhost'});
  network.portless.remove=async()=>{removes++;};
  network.guestHosts.sync=async(names)=>{syncs++;if(names.length)throw new Error('guest mapping setup failed');};
  await assert.rejects(network.publish(listener,'web','http'),/guest mapping setup failed/);
@@ -83,7 +83,7 @@ test('HTTP guest setup failure removes proxy/native state, failed cleanup remain
 
 function httpManager() {
  const fixture=manager(),{network}=fixture;
- network.portless.add=async name=>({hostname:`${name}.${network.portless.namespace}.pibox.test`,url:`http://${name}.${network.portless.namespace}.pibox.test`});
+ network.portless.add=async name=>({hostname:`${name}.${network.portless.namespace}.localhost`,url:`http://${name}.${network.portless.namespace}.localhost`});
  network.portless.remove=async()=>{};
  network.guestHosts.sync=async()=>{};
  network.check=async()=>{};
@@ -128,6 +128,6 @@ test('pending guest cleanup names are excluded when another service is published
  await network.publish(second,'api','http');
  await network.unpublish('127.0.0.1:3001');
  await network.unpublish('127.0.0.1:3000');
- assert.deepEqual(syncs,[[`api.${network.portless.namespace}.pibox.test`],[],[]]);
+ assert.deepEqual(syncs,[[`api.${network.portless.namespace}.localhost`],[],[]]);
  assert.equal(ports.size,0);assert.equal(network.published.size,0);await network.close();
 });

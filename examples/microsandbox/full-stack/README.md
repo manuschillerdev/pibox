@@ -6,7 +6,7 @@ This example runs a Docker Compose development stack entirely inside Microsandbo
 - a Quarkus REST backend on <http://localhost:8080/api/tasks>;
 - PostgreSQL on `localhost:5432`.
 
-The example directory is bind-mounted at `/workspace`. Pibox provides repository-scoped pnpm caching and user-scoped Maven and mise caching. The Pibox base image includes mise, Docker Engine, its matching CLI, and Docker Compose. Pibox starts Docker and runs `mise install` before connecting the worker.
+The example directory is bind-mounted at `/workspace`. Pibox caches pnpm per repository and Maven and mise per user, then starts Docker and runs `mise install`. The base image includes mise, Docker Engine, its CLI, and Docker Compose. Docker's nested `vfs` storage uses a 32 GiB writable upper filesystem.
 
 ## Start Pibox
 

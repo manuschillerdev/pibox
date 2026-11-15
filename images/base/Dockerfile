@@ -20,8 +20,14 @@ RUN apt-get update \
          docker-compose \
          docker.io \
          git \
+         gzip \
          iptables \
          libatomic1 \
+         libstdc++6 \
+         openssh-client \
+         openssh-server \
+         procps \
+         tar \
          xz-utils \
     && rm -rf /var/lib/apt/lists/* \
     && case "$TARGETARCH" in \
@@ -43,6 +49,7 @@ RUN apt-get update \
     && tar -xJf "$NODE_ARCHIVE" --strip-components=1 -C /opt/pibox/node \
     && rm "$NODE_ARCHIVE" \
     && npm install --global --prefix /opt/pibox/runtime --no-audit --no-fund \
+         --allow-scripts=agent-browser,@google/genai,protobufjs \
          "@earendil-works/pi-coding-agent@${PI_VERSION}" \
          "agent-browser@${AGENT_BROWSER_VERSION}" \
     && mkdir -p /root/.agents/skills \
@@ -54,13 +61,14 @@ RUN apt-get update \
     && echo "${MISE_SHA256}  /tmp/mise" | sha256sum -c - \
     && install -m 0755 /tmp/mise /usr/local/bin/mise \
     && rm /tmp/mise \
-    && mkdir -p /etc/docker \
+    && mkdir -p /etc/docker /run/sshd \
     && printf '{\n  "storage-driver": "vfs"\n}\n' > /etc/docker/daemon.json \
     && node --version \
     && pi --version \
     && mise --version \
     && docker --version \
     && docker-compose --version \
+    && sshd -t \
     && chromium --version \
     && agent-browser --version \
     && agent-browser skills get core >/dev/null \

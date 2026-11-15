@@ -1,6 +1,6 @@
 import { execute, type SandboxInstance } from "./sandbox.js";
 import { NETWORK_NODE } from "./network-discovery.js";
-import { validateNetworkHostname } from "./network-hosts.js";
+import { validateNetworkHostname } from "./network-portless.js";
 import { httpReadiness } from "./network-readiness.js";
 
 export const GUEST_HOSTS_SCRIPT = String.raw`
@@ -12,7 +12,7 @@ const timer=setTimeout(()=>{console.error('Guest network operation timed out');p
   const http=require('node:http');
   await new Promise((resolve,reject)=>{const req=http.request(url,{method:'HEAD',agent:false},res=>{res.resume();console.log(res.statusCode);resolve()});req.on('error',reject);req.end()});return;
  }
- if(!/^pibox-[a-f0-9]{8}$/.test(namespace)||names.some(n=>!n.endsWith('.'+namespace+'.pibox.test')||!/^[a-z0-9.-]+$/.test(n)))throw Error('Invalid guest mapping');
+ if(!/^pibox-[a-f0-9]{8}$/.test(namespace)||names.some(n=>!n.endsWith('.'+namespace+'.localhost')||!/^[a-z0-9.-]+$/.test(n)))throw Error('Invalid guest mapping');
  const {address}=names.length ? await dns.lookup('host.smolvm.internal',{family:4}) : {address:''};
  const lock='/tmp/pibox-net-hosts.lock', marker='# pibox-net:'+namespace;
  fs.mkdirSync(lock);

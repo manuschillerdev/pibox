@@ -120,7 +120,7 @@ export class PiRpcClient {
     });
 
     try {
-      await this.enqueueWrite(`${JSON.stringify({ id, type: command, ...fields })}\n`);
+      await this.enqueueWrite(`${JSON.stringify({ id, type: command, ...fields })}\n`, () => this.pending.has(id) && !this.closed && !this.closing);
     } catch (error) {
       const pending = this.pending.get(id);
       if (pending) {
@@ -264,8 +264,10 @@ export class PiRpcClient {
     }
   }
 
-  private async enqueueWrite(line: string): Promise<void> {
-    const write = this.writeTail.then(() => this.process.write(line));
+  private async enqueueWrite(line: string, mayWrite: () => boolean): Promise<void> {
+    const write = this.writeTail.then(() => {
+      if (mayWrite()) return this.process.write(line);
+    });
     this.writeTail = write.catch(() => undefined);
     await write;
   }

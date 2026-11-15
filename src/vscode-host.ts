@@ -20,6 +20,16 @@ async function safePath(path: string, directory: boolean): Promise<void> {
   }
 }
 function missing(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === "ENOENT"; }
+function commandError(error: unknown): string {
+  const value = error as NodeJS.ErrnoException & { code?: number | string; signal?: string; stderr?: string; stdout?: string };
+  const details = [
+    value.code !== undefined ? `exit ${value.code}` : undefined,
+    value.signal ? `signal ${value.signal}` : undefined,
+    value.stderr?.trim(),
+    value.stdout?.trim(),
+  ].filter((detail): detail is string => Boolean(detail));
+  return details.length ? details.join("; ") : error instanceof Error ? error.message : String(error);
+}
 
 export function hasControls(value: string): boolean {
   return [...value].some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127);
@@ -55,7 +65,9 @@ export class VscodeHost {
     if (process.platform === "win32") throw new Error("/pibox-vscode currently requires a macOS or Linux host");
     try { await this.run("code", ["--version"]); }
     catch { throw new Error("VS Code CLI not found or failed: install 'code' in PATH before using /pibox-vscode"); }
-    const extensions = await this.run("code", ["--list-extensions"]);
+    let extensions: string;
+    try { extensions = await this.run("code", ["--list-extensions"]); }
+    catch (error) { throw new Error(`VS Code CLI could not list extensions: ${commandError(error)}`, { cause: error }); }
     if (!extensions.toLowerCase().split(/\r?\n/).includes("ms-vscode-remote.remote-ssh")) {
       throw new Error("Install Microsoft's Remote - SSH extension in the default VS Code profile first: code --install-extension ms-vscode-remote.remote-ssh");
     }

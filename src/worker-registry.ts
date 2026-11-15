@@ -14,6 +14,7 @@ export class WorkerRegistry {
   private shutdown: Promise<void> | undefined;
   private readonly networkProxy = new EmbeddedPortless();
   private readonly creating = new Map<string, Promise<Worker>>();
+  private readonly lifecycleTails = new Map<string, Promise<void>>();
   private routedWorkerId: string | undefined;
 
   constructor(readonly manager = new WorkerManager()) {}
@@ -88,25 +89,37 @@ export class WorkerRegistry {
     return worker;
   }
 
-  async stop(workerId: string): Promise<void> {
-    const worker = this.get(workerId);
+  stop(workerId: string): Promise<void> {
+    if (this.closing) return Promise.reject(new Error("Pibox controller is shutting down"));
     this.clearRoute(workerId);
-    try {
-      await worker.shutdown();
-    } finally {
-      // shutdown closes RPC even if a later cleanup step fails. Keep the handle
-      // for explicit removal, but never route a closed worker again.
-      this.stoppedWorkers.set(workerId, worker);
-      this.workers.delete(workerId);
-    }
+    return this.lifecycle(workerId, async () => {
+      const worker = this.get(workerId);
+      try {
+        await worker.shutdown();
+      } finally {
+        // Keep failed cleanup retryable, but never route a closed worker.
+        this.stoppedWorkers.set(workerId, worker);
+        this.workers.delete(workerId);
+      }
+    });
   }
 
-  async remove(workerId: string): Promise<void> {
-    const worker = this.stoppedWorkers.get(workerId) ?? this.get(workerId);
+  remove(workerId: string): Promise<void> {
+    if (this.closing) return Promise.reject(new Error("Pibox controller is shutting down"));
     this.clearRoute(workerId);
-    await worker.shutdownAndRemove();
-    this.workers.delete(workerId);
-    this.stoppedWorkers.delete(workerId);
+    return this.lifecycle(workerId, async () => {
+      const worker = this.stoppedWorkers.get(workerId) ?? this.get(workerId);
+      try {
+        await worker.shutdownAndRemove();
+      } finally {
+        if (this.workers.get(workerId) === worker) {
+          this.workers.delete(workerId);
+          this.stoppedWorkers.set(workerId, worker);
+        }
+      }
+      this.stoppedWorkers.delete(workerId);
+      this.workers.delete(workerId);
+    });
   }
 
   shutdownAll(): Promise<void> {
@@ -121,7 +134,7 @@ export class WorkerRegistry {
   private async drainWorkers(): Promise<void> {
     // Block new creation first, then include workers still being bootstrapped.
     // Failed creation already owns its rollback in WorkerManager/the adapter.
-    await Promise.allSettled([...this.creating.values()]);
+    await Promise.allSettled([...this.creating.values(), ...this.lifecycleTails.values()]);
     const workers = [...this.active(), ...this.stoppedWorkers.values()];
     const results = await Promise.allSettled(
       workers.map(async (worker) => {
@@ -165,6 +178,15 @@ export class WorkerRegistry {
     } finally {
       this.creating.delete(name);
     }
+  }
+
+  private lifecycle(workerId: string, operation: () => Promise<void>): Promise<void> {
+    const previous = this.lifecycleTails.get(workerId) ?? Promise.resolve();
+    const pending = previous.then(operation);
+    const tail = pending.then(() => undefined, () => undefined);
+    this.lifecycleTails.set(workerId, tail);
+    void tail.then(() => { if (this.lifecycleTails.get(workerId) === tail) this.lifecycleTails.delete(workerId); });
+    return pending;
   }
 
   private assertOpen(): void {

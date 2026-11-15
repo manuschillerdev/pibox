@@ -16,7 +16,7 @@ test('host readiness distinguishes upstream 502 using real HTTP and normal looku
  t.mock.method(http,'request',(url,options,callback)=>originalRequest(url,{...options,lookup:(_host,_options,done)=>done(null,[{address:'127.0.0.1',family:4}])},callback));
  syncBuiltinESMExports();
  try {
-  const url=`http://web.pibox-12345678.pibox.test:${server.address().port}`;
+  const url=`http://web.pibox-12345678.localhost:${server.address().port}`;
   assert.equal(await hostNetworkReadiness(url),'HTTP reachable (OS resolution) · HTTP 502 · upstream unavailable');
   for(const response of [200,401,403]){status=response;assert.equal(await hostNetworkReadiness(url),`HTTP reachable (OS resolution) · HTTP ${response}`);}
   t.mock.method(dns,'lookup',async()=>[{address:'192.0.2.1',family:4}]);syncBuiltinESMExports();
@@ -25,8 +25,8 @@ test('host readiness distinguishes upstream 502 using real HTTP and normal looku
 });
 test('guest status reports unavailable upstream and invalid HTTP responses',async()=>{
  const guest=new GuestHosts({},'pibox-12345678');let response='502';guest.run=async()=>response;
- assert.match(await guest.status('http://web.pibox-12345678.pibox.test'),/HTTP 502 · upstream unavailable/);
- response='401';assert.match(await guest.status('http://web.pibox-12345678.pibox.test'),/HTTP 401$/);
- response='000';assert.match(await guest.status('http://web.pibox-12345678.pibox.test'),/No valid HTTP response/);
+ assert.match(await guest.status('http://web.pibox-12345678.localhost'),/HTTP 502 · upstream unavailable/);
+ response='401';assert.match(await guest.status('http://web.pibox-12345678.localhost'),/HTTP 401$/);
+ response='000';assert.match(await guest.status('http://web.pibox-12345678.localhost'),/No valid HTTP response/);
  assert.throws(()=>httpReadiness(0,'test'),/No valid/);
 });

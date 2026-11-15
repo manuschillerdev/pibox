@@ -45,7 +45,7 @@ test('embedded Portless serves exact in-memory routes, preserves origin and isol
     const response=await get(routeA.url+'/api');
     assert.equal(response.status,200);
     assert.deepEqual(JSON.parse(response.body),{host:new URL(routeA.url).host,path:'/api',proto:'http'});
-    assert.equal((await get(routeA.url,'unknown.pibox.test')).status,404);
+    assert.equal((await get(routeA.url,'unknown.localhost')).status,404);
     assert.equal((await get(routeA.url,'child.'+routeA.hostname)).status,404);
     await assert.rejects(a.add('web',target.port),/already published/);
     await assert.rejects(a.remove(routeA.hostname,target.port+1),/another publication/);
@@ -117,7 +117,7 @@ test('default proxy port is 80 and returned URLs omit the default port', async()
   const target=await backend();const routes=new PortlessRoutes('pibox-default',proxy);
   try {
     const route=await routes.add('web',target.port);
-    assert.equal(route.url,'http://web.pibox-default.pibox.test');
+    assert.equal(route.url,'http://web.pibox-default.localhost');
     await routes.remove(route.hostname,target.port);
   } finally {await target.close();}
 });

@@ -59,27 +59,7 @@ async function freePort() {
   return;
  }
  if (input.action !== 'prepare' || !/^ssh-ed25519 [A-Za-z0-9+/]{68}=?$/.test(input.publicKey)) throw new Error('Invalid SSH public key');
- if (!fs.existsSync('/usr/sbin/sshd')) {
-  // Debian maintainer scripts must not start a separate, default SSH service.
-  // Never replace an existing administrator policy.
-  const policy = '/usr/sbin/policy-rc.d';
-  let fd, created = false;
-  try { fd = fs.openSync(policy, 'wx', 0o755); created = true; }
-  catch (e) {
-   if (e.code !== 'EEXIST') throw e;
-   const s = fs.lstatSync(policy);
-   const body = s.isFile() && s.uid === 0 && !(s.mode & 0o022) ? fs.readFileSync(policy,'utf8') : '';
-   // Debian container images commonly already have this deny-all policy.
-   if (!body.startsWith('#!/bin/sh\n') || body.split('\n').map(l=>l.trim()).filter(l=>l && !l.startsWith('#')).join('\n') !== 'exit 101') {
-    throw new Error('Install openssh-server in the guest first: existing policy-rc.d prevents safe automatic installation');
-   }
-  }
-  try {
-   if (created) { fs.writeFileSync(fd, '#!/bin/sh\nexit 101\n'); fs.closeSync(fd); fd = undefined; }
-   run('apt-get',['update'],120000);
-   run('apt-get',['install','-y','--no-install-recommends','openssh-server'],120000);
-  } finally { if (fd !== undefined) fs.closeSync(fd); if (created) fs.unlinkSync(policy); }
- }
+ if (!fs.existsSync('/usr/sbin/sshd')) throw new Error('/pibox-vscode requires the Pibox base image, which includes openssh-server');
  if (!fs.existsSync(dir)) fs.mkdirSync(dir,{mode:0o700});
  ownedDirectory();
  if (!fs.existsSync(dir + '/host_key')) run('ssh-keygen',['-q','-t','ed25519','-N','','-f',dir + '/host_key']);

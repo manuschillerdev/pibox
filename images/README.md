@@ -6,12 +6,13 @@ The OCI image includes:
 
 - Node.js **26.13.1 LTS**, Pi **1.5.2**, and agent-browser **0.43.0** under `/opt/pibox`;
 - mise **2026.11.7**, Docker Engine, its matching CLI, Docker Compose, `iptables`, and `libatomic1`;
+- OpenSSH server/client plus the VS Code Remote bootstrap/runtime prerequisites (`bash`, `curl`, `gzip`, `tar`, `procps`, and `libstdc++6`);
 - Debian Chromium, its runtime dependencies, Liberation fonts, and Noto color emoji;
 - agent-browser's bundled discovery skill at `/root/.agents/skills/agent-browser`, available to isolated Pibox worker profiles.
 
 `AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium` selects the system browser on both architectures; no separate Chrome download is needed. The skill loads version-matched instructions with `agent-browser skills get core`. Chromium runs headlessly; agent-browser disables Chromium's sandbox when running as root, so the VM remains the outer isolation boundary.
 
-Docker is configured with the nested-VM-compatible `vfs` storage driver. Pibox starts the daemon and runs `mise install` when the worker starts. Published image updates apply to newly created VMs, not existing persistent guest filesystems.
+Docker is configured with the nested-VM-compatible `vfs` storage driver. Pibox starts the daemon and runs `mise install` when the worker starts. The `bookworm` tag is the latest verified multi-architecture image published from GitHub `main`; pull it before a local Docker run with `docker pull ghcr.io/manuschillerdev/pibox-base:bookworm`. Published image updates apply to newly created VMs, not existing persistent guest filesystems.
 
 ## Publishing
 

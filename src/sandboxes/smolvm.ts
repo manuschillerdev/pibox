@@ -47,11 +47,11 @@ export class SmolvmProvider implements SandboxProvider {
     try {
       const existing = await existingMachine(name, labels);
       if (existing) {
+        instance = new SmolvmInstance(name, this.credentials, this.credentialBroker,
+          existing.identity, release, existing.state === "running" ? "running" : "stopped");
         if (existing.state === "stopped") {
           await runSmolvm(["machine", "start", "--name", name], hostEnvironment);
         }
-        instance = new SmolvmInstance(name, this.credentials, this.credentialBroker,
-          existing.identity, release, existing.state === "running" ? "running" : "stopped");
         await this.credentialBroker.attach(name, existing.identity, this.credentials);
         return instance;
       }
